@@ -1,3 +1,4 @@
+// main/wifi_manager.cpp
 #include "wifi_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -162,6 +163,11 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     strncpy((char*)sta_config.sta.password, pass, 64);
     sta_config.sta.listen_interval = 5;
     
+    // CRITICAL: Explicitly support modern WPA2/WPA3 routers and PMF 
+    sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    sta_config.sta.pmf_cfg.capable = true;
+    sta_config.sta.pmf_cfg.required = false;
+    
     ESP_LOGI(TAG, "Asynchronous connection triggered via BLE for SSID: %s", ssid);
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_APSTA);
@@ -258,6 +264,11 @@ void wifi_manager_init() {
         strncpy((char*)sta_config.sta.password, pass, 64);
         
         sta_config.sta.listen_interval = 5; 
+        // CRITICAL: Explicitly support modern WPA2/WPA3 routers and PMF 
+        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        sta_config.sta.pmf_cfg.capable = true;
+        sta_config.sta.pmf_cfg.required = false;
+
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
         
         disconnect_time = esp_timer_get_time(); 
