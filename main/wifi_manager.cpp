@@ -238,6 +238,18 @@ void wifi_manager_init() {
     
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Apply custom Wi-Fi TX Power globally
+    int8_t tx_power = 84;
+    nvs_handle_t pwr_handle;
+    if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
+        if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
+            tx_power = 84; // Default if not explicitly set
+        }
+        nvs_close(pwr_handle);
+    }
+    esp_wifi_set_max_tx_power(tx_power);
+    ESP_LOGI(TAG, "Wi-Fi TX Power initialized to %d", tx_power);
+
     if (has_creds) {
         ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
         wifi_config_t sta_config = {};
@@ -247,7 +259,6 @@ void wifi_manager_init() {
         
         sta_config.sta.listen_interval = 5; 
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-        esp_wifi_set_max_tx_power(84); 
         
         disconnect_time = esp_timer_get_time(); 
         esp_wifi_connect();
@@ -318,4 +329,15 @@ void wifi_manager_force_ap_temporary() {
     if (dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
     }
+}
+
+void wifi_set_tx_power(int8_t power) {
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_i8(my_handle, "wifi_tx_pwr", power);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+    esp_wifi_set_max_tx_power(power);
+    ESP_LOGI(TAG, "Wi-Fi TX Power dynamically set to %d. Saved to NVS.", power);
 }

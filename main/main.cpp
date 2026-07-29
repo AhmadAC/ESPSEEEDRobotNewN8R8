@@ -39,6 +39,7 @@ static void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "  ap         - Force AP Mode (Wi-Fi Hotspot)");
     ESP_LOGI("REPL", "  wifi       - Connect to saved Wi-Fi");
     ESP_LOGI("REPL", "  bt         - Switch to Bluetooth Control");
+    ESP_LOGI("REPL", "  wifi_power <val> - Set Wi-Fi TX power (8=2dBm, 52=13dBm, 84=21dBm)");
     ESP_LOGI("REPL", "  reset      - Factory Reset NVS (Restores Settings)");
     ESP_LOGI("REPL", "  sound      - Enable Audio UI");
     ESP_LOGI("REPL", "  no sound   - Disable & Hide Audio UI");
@@ -170,6 +171,12 @@ static void console_read_task(void *pvParameter) {
                             }
                             vTaskDelay(pdMS_TO_TICKS(500));
                             esp_restart();
+                        } else if (strncmp(cmd, "wifi_power ", 11) == 0) {
+                            int pwr = atoi(cmd + 11);
+                            if (pwr < 8) pwr = 8;
+                            if (pwr > 84) pwr = 84;
+                            wifi_set_tx_power((int8_t)pwr);
+                            ESP_LOGW("REPL", "Command 'wifi_power' received. TX Power set to %d.", pwr);
                         } else if (strcmp(cmd, "connect") == 0) {
                             ESP_LOGW("REPL", "Command 'connect' received. Initiating ESP-NOW pairing...");
                             if (is_claw_mode) {
