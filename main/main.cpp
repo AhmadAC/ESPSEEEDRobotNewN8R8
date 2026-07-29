@@ -38,6 +38,7 @@ static void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "  mode cam   - Switch to Raw Camera Profile");
     ESP_LOGI("REPL", "  ap         - Force AP Mode (Wi-Fi Hotspot)");
     ESP_LOGI("REPL", "  wifi       - Connect to saved Wi-Fi");
+    ESP_LOGI("REPL", "  wifi_set \"ssid\" \"pass\" - Save new Wi-Fi credentials");
     ESP_LOGI("REPL", "  bt         - Switch to Bluetooth Control");
     ESP_LOGI("REPL", "  wifi_power <val> - Set Wi-Fi TX power (8=2dBm, 52=13dBm, 84=21dBm)");
     ESP_LOGI("REPL", "  reset      - Factory Reset NVS (Restores Settings)");
@@ -60,7 +61,7 @@ static void console_read_task(void *pvParameter) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     uint8_t buf[64];
-    char cmd[64];
+    char cmd[128]; // Increased buffer size to handle longer Wi-Fi passwords
     int cmd_idx = 0;
     static bool repl_sync = false;
     
@@ -177,6 +178,53 @@ static void console_read_task(void *pvParameter) {
                             if (pwr > 84) pwr = 84;
                             wifi_set_tx_power((int8_t)pwr);
                             ESP_LOGW("REPL", "Command 'wifi_power' received. TX Power set to %d.", pwr);
+                        } else if (strncmp(cmd, "wifi_set ", 9) == 0) {
+                            char ssid[33] = {0};
+                            char pass[65] = {0};
+                            
+                            // Parse out quotes if the user typed: wifi_set "SSID" "PASSWORD"
+                            char *s1 = strchr(cmd + 8, '"');
+                            if (s1) {
+                                char *s2 = strchr(s1 + 1, '"');
+                                if (s2) {
+                                    int len = s2 - (s1 + 1);
+                                    if (len > 32) len = 32;
+                                    strncpy(ssid, s1 + 1, len);
+                                    
+                                    char *p1 = strchr(s2 + 1, '"');
+                                    if (p1) {
+                                        char *p2 = strchr(p1 + 1, '"');
+                                        if (p2) {
+                                            int plen = p2 - (p1 + 1);
+                                            if (plen > 64) plen = 64;
+                                            strncpy(pass, p1 + 1, plen);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Fallback to space separated if the user typed: wifi_set MySsid MyPass
+                                sscanf(cmd + 9, "%32s %64s", ssid, pass);
+                            }
+
+                            if (strlen(ssid) > 0) {
+                                ESP_LOGW("REPL", "Saving Wi-Fi -> SSID: '%s', PASS: '%s'", ssid, pass);
+                                wifi_save_credentials(ssid, pass);
+                                
+                                // Automatically switch back to wifi boot mode and clear force_ap
+                                nvs_handle_t h;
+                                if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
+                                    nvs_set_str(h, "boot_mode", "wifi");
+                                    nvs_set_u8(h, "force_ap", 0);
+                                    nvs_commit(h);
+                                    nvs_close(h);
+                                }
+                                
+                                ESP_LOGW("REPL", "Rebooting to connect...");
+                                vTaskDelay(pdMS_TO_TICKS(500));
+                                esp_restart();
+                            } else {
+                                ESP_LOGE("REPL", "Invalid syntax. Use: wifi_set \"SSID\" \"PASSWORD\"");
+                            }
                         } else if (strcmp(cmd, "connect") == 0) {
                             ESP_LOGW("REPL", "Command 'connect' received. Initiating ESP-NOW pairing...");
                             if (is_claw_mode) {
