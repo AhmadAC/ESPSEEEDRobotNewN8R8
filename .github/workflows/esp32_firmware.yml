@@ -2,9 +2,9 @@ name: Compile Xiao ESP32S3 Firmware
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "esp" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "esp" ]
   workflow_dispatch:
 
 jobs:
