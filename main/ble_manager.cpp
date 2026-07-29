@@ -8,8 +8,12 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "servo_controller.h"
 #include "claw_controller.h"
+#include "cam_controller.h"
+#include "audio_player.h"
+#include "sensor_monitor.h"
 #include "wifi_manager.h"
 #include "cJSON.h"
+#include "nvs.h"
 #include <string.h>
 
 static const char *TAG = "BLE_MGR";
@@ -30,20 +34,74 @@ bool ble_manager_is_connected() {
     return is_ble_connected_flag;
 }
 
+static void delayed_reboot_task(void *pvParameter) {
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+}
+
 static void process_ble_command(const char* cmd) {
     if (!cmd || strlen(cmd) == 0) return;
 
     ESP_LOGI(TAG, "BLE Command Received: %s", cmd);
+
+    // 1. Handle Compact Wi-Fi Provisioning (Format: "wifi:SSID,PASSWORD" or "w:SSID,PASSWORD")
+    if (strncmp(cmd, "wifi:", 5) == 0 || strncmp(cmd, "w:", 2) == 0) {
+        const char* creds = (strncmp(cmd, "wifi:", 5) == 0) ? (cmd + 5) : (cmd + 2);
+        char* comma = strchr(creds, ',');
+        if (comma) {
+            char ssid_buf[33] = {0};
+            char pass_buf[65] = {0};
+            size_t s_len = comma - creds;
+            if (s_len < sizeof(ssid_buf)) {
+                strncpy(ssid_buf, creds, s_len);
+                strncpy(pass_buf, comma + 1, sizeof(pass_buf) - 1);
+                ESP_LOGI(TAG, "Wi-Fi Credentials received via BLE - SSID: %s", ssid_buf);
+                wifi_save_credentials(ssid_buf, pass_buf);
+                wifi_manager_connect_async(ssid_buf, pass_buf);
+                return;
+            }
+        }
+    }
 
     // Strip "action:" prefix if present
     if (strncmp(cmd, "action:", 7) == 0) {
         cmd += 7;
     }
 
-    // 1. Try parsing JSON payload
+    // Direct String Commands for Quick App Controls
+    if (strcmp(cmd, "cam_flip") == 0 || strcmp(cmd, "/cam_flip") == 0) {
+        cam_toggle_flip();
+        return;
+    }
+    if (strcmp(cmd, "audio_stop") == 0 || strcmp(cmd, "/audio_stop") == 0) {
+        audio_stop();
+        return;
+    }
+    if (strcmp(cmd, "switch_to_ap") == 0 || strcmp(cmd, "/switch_to_ap") == 0) {
+        nvs_handle_t h;
+        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u8(h, "force_ap", 1);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+        return;
+    }
+    if (strcmp(cmd, "switch_to_wifi") == 0 || strcmp(cmd, "/switch_to_wifi") == 0) {
+        nvs_handle_t h;
+        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u8(h, "force_ap", 0);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+        return;
+    }
+
+    // 2. Try parsing JSON payload
     cJSON *json = cJSON_Parse(cmd);
     if (json != NULL) {
-        // Handle Wi-Fi Provisioning via JSON
+        // Wi-Fi Credentials via JSON
         cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
         cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
         if (!pass_item) pass_item = cJSON_GetObjectItem(json, "password");
@@ -56,7 +114,63 @@ static void process_ble_command(const char* cmd) {
             return;
         }
 
-        // Handle Claw commands via JSON
+        // Mode Switching via JSON
+        cJSON *mode_item = cJSON_GetObjectItem(json, "mode");
+        if (mode_item && mode_item->valuestring) {
+            nvs_handle_t h;
+            if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
+                nvs_set_str(h, "dev_mode", mode_item->valuestring);
+                nvs_commit(h);
+                nvs_close(h);
+            }
+            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+            cJSON_Delete(json);
+            return;
+        }
+
+        // Camera Flip via JSON
+        cJSON *cam_flip = cJSON_GetObjectItem(json, "cam_flip");
+        if (cam_flip) {
+            cam_toggle_flip();
+        }
+
+        // Audio Volume via JSON
+        cJSON *vol_item = cJSON_GetObjectItem(json, "volume");
+        if (vol_item) {
+            audio_set_volume(vol_item->valueint);
+        }
+
+        // Audio Play via JSON
+        cJSON *snd_item = cJSON_GetObjectItem(json, "sound");
+        if (snd_item && snd_item->valuestring) {
+            audio_play(snd_item->valuestring);
+        }
+
+        // Ultrasonic Sensor Settings via JSON
+        cJSON *sen_en = cJSON_GetObjectItem(json, "enabled");
+        if (sen_en) {
+            sensor_set_enabled(cJSON_IsTrue(sen_en) || (sen_en->valueint != 0));
+        }
+        cJSON *sen_th = cJSON_GetObjectItem(json, "threshold");
+        if (sen_th) {
+            sensor_set_threshold(sen_th->valueint);
+        }
+        cJSON *sen_re = cJSON_GetObjectItem(json, "reaction_time");
+        if (sen_re) {
+            sensor_set_reaction_time(sen_re->valueint);
+        }
+        cJSON *trip_act = cJSON_GetObjectItem(json, "tripped_action");
+        cJSON *clear_act = cJSON_GetObjectItem(json, "cleared_action");
+        if (trip_act && clear_act && trip_act->valuestring && clear_act->valuestring) {
+            sensor_set_actions(trip_act->valuestring, clear_act->valuestring);
+        }
+        cJSON *atrip_act = cJSON_GetObjectItem(json, "tripped_audio");
+        cJSON *aclear_act = cJSON_GetObjectItem(json, "cleared_audio");
+        if (atrip_act && aclear_act && atrip_act->valuestring && aclear_act->valuestring) {
+            sensor_set_audio_actions(atrip_act->valuestring, aclear_act->valuestring);
+        }
+
+        // Claw Commands via JSON
         cJSON *claw_cmd = cJSON_GetObjectItem(json, "claw_cmd");
         if (!claw_cmd) claw_cmd = cJSON_GetObjectItem(json, "cmd");
         if (claw_cmd && claw_cmd->valuestring) {
@@ -69,7 +183,7 @@ static void process_ble_command(const char* cmd) {
             claw_set_angle(claw_angle->valueint);
         }
 
-        // Handle Robot Actions via JSON
+        // Robot Actions via JSON
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item && act_item->valuestring) {
             if (is_claw_mode) {
@@ -79,7 +193,7 @@ static void process_ble_command(const char* cmd) {
             }
         }
 
-        // Handle Individual Servos via JSON
+        // Individual Leg Servos via JSON
         cJSON *ll = cJSON_GetObjectItem(json, "ll");
         cJSON *lr = cJSON_GetObjectItem(json, "lr");
         cJSON *hl = cJSON_GetObjectItem(json, "hl");
@@ -97,7 +211,7 @@ static void process_ble_command(const char* cmd) {
         return;
     }
 
-    // 2. Fallback to Plain Text / CSV Commands
+    // 3. Fallback to Plain Text / CSV Commands
     if (strncmp(cmd, "claw:", 5) == 0) {
         claw_execute_command(cmd + 5);
     } else if (strncmp(cmd, "claw_angle:", 11) == 0) {
