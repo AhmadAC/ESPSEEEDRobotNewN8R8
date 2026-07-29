@@ -139,7 +139,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         
         disconnect_time = 0;
         ap_fallback_active = false;
-        esp_wifi_set_mode(WIFI_MODE_STA);
 
         char ip_str[32];
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
@@ -165,7 +164,7 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     
     ESP_LOGI(TAG, "Asynchronous connection triggered via BLE for SSID: %s", ssid);
     esp_wifi_disconnect();
-    esp_wifi_set_mode(WIFI_MODE_APSTA); // Keep AP active so BLE link doesn't drop during connection
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
     esp_wifi_connect();
 }
@@ -224,7 +223,7 @@ void wifi_manager_init() {
     }
 
     if (has_creds) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
         ap_fallback_active = false;
     } else {
         if (force_ap_u8 == 1) ESP_LOGI(TAG, "AP Mode forced by User Preference.");

@@ -314,7 +314,6 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
                 active_conn_handle = event->connect.conn_handle;
                 is_ble_connected_flag = true;
                 ESP_LOGI(TAG, "BLE Client Connected!");
-                wifi_manager_force_ap_temporary();
             } else {
                 ESP_LOGE(TAG, "BLE Connection failed! Status: %d", event->connect.status);
                 is_ble_connected_flag = false;

@@ -312,7 +312,7 @@ static esp_err_t ws_handler(httpd_req_t *req) {
 }
 
 // -----------------------------------------------------------------
-// Claw Endpoints
+// Claw Endpoints (Universal)
 // -----------------------------------------------------------------
 static esp_err_t claw_get_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Connection", "close");
@@ -422,11 +422,13 @@ static esp_err_t action_post_handler(httpd_req_t *req) {
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item) {
-            ESP_LOGI(TAG, "UI Triggered Action: %s", act_item->valuestring);
-            if (is_claw_mode) {
-                claw_execute_command(act_item->valuestring);
+            const char* act = act_item->valuestring;
+            ESP_LOGI(TAG, "UI Triggered Action: %s", act);
+            if (is_claw_mode || strcmp(act, "open") == 0 || strcmp(act, "close") == 0 ||
+                strcmp(act, "half_open") == 0 || strcmp(act, "half_close") == 0) {
+                claw_execute_command(act);
             } else {
-                servo_set_action(act_item->valuestring);
+                servo_set_action(act);
             }
         }
         cJSON_Delete(json);
@@ -601,6 +603,10 @@ void web_server_init() {
             httpd_uri_t uri_switchwi = { .uri = "/switch_to_wifi", .method = HTTP_POST, .handler = switch_wifi_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_swmode   = { .uri = "/switch_mode", .method = HTTP_POST, .handler = switch_mode_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
+            
+            // Universal Claw Endpoints
+            httpd_uri_t uri_claw     = { .uri = "/claw",   .method = HTTP_GET, .handler = claw_get_handler,   .user_ctx = NULL };
+            httpd_uri_t uri_status   = { .uri = "/status", .method = HTTP_GET, .handler = claw_status_get_handler, .user_ctx = NULL };
 
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -609,15 +615,13 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_switchwi);
             httpd_register_uri_handler(server, &uri_swmode);
             httpd_register_uri_handler(server, &uri_favicon);
+            httpd_register_uri_handler(server, &uri_claw);
+            httpd_register_uri_handler(server, &uri_status);
 
             if (is_claw_mode) {
-                httpd_uri_t uri_claw   = { .uri = "/claw",   .method = HTTP_GET, .handler = claw_get_handler,   .user_ctx = NULL };
-                httpd_uri_t uri_status = { .uri = "/status", .method = HTTP_GET, .handler = claw_status_get_handler, .user_ctx = NULL };
                 httpd_uri_t uri_ccap   = { .uri = "/capture",.method = HTTP_GET, .handler = cam_capture_get_handler, .user_ctx = NULL };
                 httpd_uri_t uri_pair   = { .uri = "/espnow_pair",.method = HTTP_POST, .handler = espnow_pair_post_handler, .user_ctx = NULL };
                 
-                httpd_register_uri_handler(server, &uri_claw);
-                httpd_register_uri_handler(server, &uri_status);
                 httpd_register_uri_handler(server, &uri_ccap);
                 httpd_register_uri_handler(server, &uri_pair);
             } else if (is_cam_mode) {
