@@ -1,4 +1,4 @@
-// main\web_server.cpp
+// main/web_server.cpp
 #include "web_server.h"
 #include "web_html.h"
 #include "wifi_manager.h"
@@ -51,8 +51,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     }
     
     httpd_resp_send_chunk(req, html_part1, HTTPD_RESP_USE_STRLEN);
-    
-    // Send the Robot Camera UI Card
     httpd_resp_send_chunk(req, html_cam_card, HTTPD_RESP_USE_STRLEN);
     
     if (sound_en) {
@@ -98,10 +96,9 @@ static esp_err_t cam_capture_get_handler(httpd_req_t *req) {
     sensor_t * s = esp_camera_sensor_get();
     if (s != NULL) {
         s->set_framesize(s, FRAMESIZE_UXGA); 
-        s->set_quality(s, 12); // Restored to extremely stable safe quality threshold             
+        s->set_quality(s, 12); 
     }
     
-    // Clear out residual pipeline framebuffers so mode switch remains perfectly aligned
     for (int i = 0; i < 2; i++) {
         camera_fb_t * fb = esp_camera_fb_get();
         if (fb) esp_camera_fb_return(fb);
@@ -263,7 +260,7 @@ static esp_err_t espnow_pair_post_handler(httpd_req_t *req) {
 }
 
 // -----------------------------------------------------------------
-// WebSocket Gamepad Handler
+// WebSocket Gamepad Handler (Wi-Fi Browser Control)
 // -----------------------------------------------------------------
 static esp_err_t ws_handler(httpd_req_t *req) {
     if (req->method == HTTP_GET) {
@@ -288,9 +285,23 @@ static esp_err_t ws_handler(httpd_req_t *req) {
             cJSON *json = cJSON_Parse((char*)ws_pkt.payload);
             if (json) {
                 cJSON *act_item = cJSON_GetObjectItem(json, "action");
-                if (act_item && act_item->valuestring) {
-                    // Instantly trigger robot animations
-                    servo_set_action(act_item->valuestring);
+                cJSON *claw_cmd = cJSON_GetObjectItem(json, "claw_cmd");
+                if (!claw_cmd) claw_cmd = cJSON_GetObjectItem(json, "cmd");
+                cJSON *claw_ang = cJSON_GetObjectItem(json, "claw_angle");
+                if (!claw_ang) claw_ang = cJSON_GetObjectItem(json, "angle");
+
+                if (claw_cmd && claw_cmd->valuestring) {
+                    claw_execute_command(claw_cmd->valuestring);
+                } else if (claw_ang) {
+                    claw_set_angle(claw_ang->valueint);
+                } else if (act_item && act_item->valuestring) {
+                    const char* act = act_item->valuestring;
+                    if (is_claw_mode || strcmp(act, "open") == 0 || strcmp(act, "close") == 0 ||
+                        strcmp(act, "half_open") == 0 || strcmp(act, "half_close") == 0) {
+                        claw_execute_command(act);
+                    } else {
+                        servo_set_action(act);
+                    }
                 }
                 cJSON_Delete(json);
             }
@@ -412,7 +423,11 @@ static esp_err_t action_post_handler(httpd_req_t *req) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item) {
             ESP_LOGI(TAG, "UI Triggered Action: %s", act_item->valuestring);
-            servo_set_action(act_item->valuestring);
+            if (is_claw_mode) {
+                claw_execute_command(act_item->valuestring);
+            } else {
+                servo_set_action(act_item->valuestring);
+            }
         }
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
