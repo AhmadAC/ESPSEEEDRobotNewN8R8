@@ -23,9 +23,6 @@ static bool ap_fallback_active = false;
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t udp_task_handle = NULL;
 
-/* ==============================================
-   DNS CAPTIVE PORTAL TASK
-   ============================================== */
 static void dns_server_task(void *pvParameters) {
     char rx_buffer[128];
     struct sockaddr_in dest_addr;
@@ -83,9 +80,6 @@ static void dns_server_task(void *pvParameters) {
     }
 }
 
-/* ==============================================
-   FAST UDP HEARTBEAT BROADCAST TASK
-   ============================================== */
 static void udp_broadcast_task(void *pvParameters) {
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     int broadcast = 1;
@@ -108,7 +102,6 @@ static void udp_broadcast_task(void *pvParameters) {
     }
 }
 
-// Background event handler to automatically reconnect if the router drops the connection
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         
@@ -148,19 +141,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         ap_fallback_active = false;
         esp_wifi_set_mode(WIFI_MODE_STA);
 
-        // Notify BLE Manager of the newly assigned IP so Android can close the provisioning setup
         char ip_str[32];
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
         ble_manager_notify_ip(ip_str);
 
-        // Start mDNS Background Service
         mdns_init();
         mdns_hostname_set("robotdog");
         mdns_instance_name_set("ESP32 Robot");
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
         mdns_service_add(NULL, "_camera", "_tcp", 81, NULL, 0);
 
-        // Start UDP Heartbeat Broadcaster
         if (udp_task_handle == NULL) {
             xTaskCreate(udp_broadcast_task, "udp_bcast", 2048, NULL, 5, &udp_task_handle);
         }
@@ -175,7 +165,7 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     
     ESP_LOGI(TAG, "Asynchronous connection triggered via BLE for SSID: %s", ssid);
     esp_wifi_disconnect();
-    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_mode(WIFI_MODE_APSTA); // Keep AP active so BLE link doesn't drop during connection
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
     esp_wifi_connect();
 }
@@ -312,7 +302,7 @@ void wifi_save_credentials(const char* ssid, const char* pass) {
     if (err == ESP_OK) {
         nvs_set_str(my_handle, "wifi_ssid", ssid);
         nvs_set_str(my_handle, "wifi_pass", pass);
-        nvs_set_u8(my_handle, "force_ap", 0); // Critically forces the robot to unset AP mode when loading custom credentials
+        nvs_set_u8(my_handle, "force_ap", 0);
         nvs_commit(my_handle);
         nvs_close(my_handle);
         ESP_LOGI(TAG, "Saved SSID: %s", ssid);
@@ -326,7 +316,6 @@ void wifi_manager_force_ap_temporary() {
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     ap_fallback_active = true;
     
-    // Wake up the captive portal DNS so phones immediately launch the browser
     if (dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
     }

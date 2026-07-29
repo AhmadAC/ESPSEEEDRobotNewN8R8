@@ -14,6 +14,8 @@
 
 static const char *TAG = "BLE_MGR";
 
+extern bool is_claw_mode;
+
 static const ble_uuid16_t svc_uuid = BLE_UUID16_INIT(0xABF0);
 static const ble_uuid16_t uart_rx_uuid = BLE_UUID16_INIT(0xABF1);
 static const ble_uuid16_t wifi_creds_uuid = BLE_UUID16_INIT(0xABF2);
@@ -33,24 +35,46 @@ static void process_ble_command(const char* cmd) {
 
     ESP_LOGI(TAG, "BLE Command Received: %s", cmd);
 
-    // 1. Try parsing JSON payload from Mobile App
+    // 1. Try parsing JSON payload
     cJSON *json = cJSON_Parse(cmd);
     if (json != NULL) {
-        cJSON *act_item = cJSON_GetObjectItem(json, "action");
-        if (act_item && act_item->valuestring) {
-            servo_set_action(act_item->valuestring);
+        // Handle Wi-Fi Provisioning via JSON
+        cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
+        cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
+        if (!pass_item) pass_item = cJSON_GetObjectItem(json, "password");
+
+        if (ssid_item && ssid_item->valuestring && pass_item && pass_item->valuestring) {
+            ESP_LOGI(TAG, "Wi-Fi Credentials received via BLE JSON - SSID: %s", ssid_item->valuestring);
+            wifi_save_credentials(ssid_item->valuestring, pass_item->valuestring);
+            wifi_manager_connect_async(ssid_item->valuestring, pass_item->valuestring);
+            cJSON_Delete(json);
+            return;
         }
 
+        // Handle Claw commands via JSON
         cJSON *claw_cmd = cJSON_GetObjectItem(json, "claw_cmd");
+        if (!claw_cmd) claw_cmd = cJSON_GetObjectItem(json, "cmd");
         if (claw_cmd && claw_cmd->valuestring) {
             claw_execute_command(claw_cmd->valuestring);
         }
 
         cJSON *claw_angle = cJSON_GetObjectItem(json, "claw_angle");
+        if (!claw_angle) claw_angle = cJSON_GetObjectItem(json, "angle");
         if (claw_angle) {
             claw_set_angle(claw_angle->valueint);
         }
 
+        // Handle Robot Actions via JSON
+        cJSON *act_item = cJSON_GetObjectItem(json, "action");
+        if (act_item && act_item->valuestring) {
+            if (is_claw_mode) {
+                claw_execute_command(act_item->valuestring);
+            } else {
+                servo_set_action(act_item->valuestring);
+            }
+        }
+
+        // Handle Individual Servos via JSON
         cJSON *ll = cJSON_GetObjectItem(json, "ll");
         cJSON *lr = cJSON_GetObjectItem(json, "lr");
         cJSON *hl = cJSON_GetObjectItem(json, "hl");
@@ -68,18 +92,42 @@ static void process_ble_command(const char* cmd) {
         return;
     }
 
-    // 2. Fallback to Plain Text Command processing
+    // 2. Fallback to Plain Text / CSV Commands
+    char* comma = strchr(cmd, ',');
+    if (comma && !is_claw_mode) {
+        char ssid_buf[33] = {0};
+        char pass_buf[65] = {0};
+        size_t ssid_len = comma - cmd;
+        if (ssid_len < sizeof(ssid_buf)) {
+            strncpy(ssid_buf, cmd, ssid_len);
+            strncpy(pass_buf, comma + 1, sizeof(pass_buf) - 1);
+            ESP_LOGI(TAG, "Wi-Fi Credentials received via BLE CSV - SSID: %s", ssid_buf);
+            wifi_save_credentials(ssid_buf, pass_buf);
+            wifi_manager_connect_async(ssid_buf, pass_buf);
+            return;
+        }
+    }
+
     if (strncmp(cmd, "claw:", 5) == 0) {
         claw_execute_command(cmd + 5);
     } else if (strncmp(cmd, "claw_angle:", 11) == 0) {
         claw_set_angle(atoi(cmd + 11));
+    } else if (is_claw_mode) {
+        if (strcmp(cmd, "open") == 0 || strcmp(cmd, "close") == 0 ||
+            strcmp(cmd, "half_open") == 0 || strcmp(cmd, "half_close") == 0) {
+            claw_execute_command(cmd);
+        } else if (cmd[0] >= '0' && cmd[0] <= '9') {
+            claw_set_angle(atoi(cmd));
+        } else {
+            claw_execute_command(cmd);
+        }
     } else {
         servo_set_action(cmd);
     }
 }
 
 static int ble_rx_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-    char buf[128] = {0};
+    char buf[256] = {0};
     int len = OS_MBUF_PKTLEN(ctxt->om);
     if (len > 0 && len < sizeof(buf)) {
         os_mbuf_copydata(ctxt->om, 0, len, buf);
@@ -92,7 +140,7 @@ static int ble_rx_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt
 }
 
 static int ble_wifi_rx_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-    char buf[128] = {0};
+    char buf[256] = {0};
     int len = OS_MBUF_PKTLEN(ctxt->om);
     if (len > 0 && len < sizeof(buf)) {
         os_mbuf_copydata(ctxt->om, 0, len, buf);
