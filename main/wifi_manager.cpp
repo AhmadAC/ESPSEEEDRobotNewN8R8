@@ -117,6 +117,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 ESP_LOGW(TAG, "Wi-Fi disconnected for 300s. Enabling AP fallback...");
                 esp_wifi_set_mode(WIFI_MODE_APSTA);
                 ap_fallback_active = true;
+                ble_manager_notify_ip("192.168.4.1");
                 
                 if (dns_task_handle == NULL) {
                     xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
@@ -236,6 +237,7 @@ void wifi_manager_init() {
         else ESP_LOGI(TAG, "No Valid Credentials Found. Launching AP Config Mode...");
         
         ap_fallback_active = true;
+        ble_manager_notify_ip("192.168.4.1");
         
         if (dns_task_handle == NULL) {
             xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
@@ -336,6 +338,7 @@ void wifi_manager_force_ap_temporary() {
     ESP_LOGI(TAG, "BLE Connection detected! Forcing AP Mode ON temporarily so Web Server is accessible.");
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     ap_fallback_active = true;
+    ble_manager_notify_ip("192.168.4.1");
     
     if (dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);

@@ -242,6 +242,14 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
 
         case BLE_GAP_EVENT_SUBSCRIBE:
             ESP_LOGI(TAG, "BLE Client Subscribed to Characteristic");
+            // If they subscribe to the IP characteristic, instantly push the current IP to them!
+            if (event->subscribe.attr_handle == ip_chr_val_handle) {
+                if (strcmp(current_ip, "0.0.0.0") != 0) {
+                    struct os_mbuf *om = ble_hs_mbuf_from_flat(current_ip, strlen(current_ip));
+                    ble_gatts_notify_custom(active_conn_handle, ip_chr_val_handle, om);
+                    ESP_LOGI(TAG, "Pushed current IP '%s' to newly subscribed BLE Client", current_ip);
+                }
+            }
             break;
 
         case BLE_GAP_EVENT_MTU:
