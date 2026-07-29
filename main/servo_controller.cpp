@@ -11,16 +11,16 @@
 
 static const char *TAG = "SERVO";
 
-// Pinout mapping for Seeed XIAO ESP32S3
+// Pinout mapping for Seeed XIAO ESP32S3 / ESP32-S3 Zero
 #define SERVO_LOW_LEFT_PIN   GPIO_NUM_1 // D0 (Back Left)
 #define SERVO_HIGH_RIGHT_PIN GPIO_NUM_2 // D1 (Front Right)
 #define SERVO_HIGH_LEFT_PIN  GPIO_NUM_3 // D2 (Front Left)
 #define SERVO_LOW_RIGHT_PIN  GPIO_NUM_4 // D3 (Back Right)
 
 #define SERVO_LOW_LEFT_CH    LEDC_CHANNEL_0
-#define SERVO_HIGH_RIGHT_CH  LEDC_CHANNEL_1
-#define SERVO_HIGH_LEFT_CH   LEDC_CHANNEL_2
-#define SERVO_LOW_RIGHT_CH   LEDC_CHANNEL_3
+#define SERVO_HIGH_RIGHT_CH  LEDC_CHANNEL_2
+#define SERVO_HIGH_LEFT_CH   LEDC_CHANNEL_3
+#define SERVO_LOW_RIGHT_CH   LEDC_CHANNEL_4
 
 // State Variables (Logical angles: 0 = Left, 180 = Right)
 static int32_t target_low_left   = 90;
@@ -33,33 +33,26 @@ static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
 
-// =========================================================
-// ESPRobot Calibration Defaults
-// =========================================================
-
 static int32_t offset_low_left   = 0;
 static int32_t offset_high_right = 0;
 static int32_t offset_high_left  = 0;
-static int32_t offset_low_right  = 11; // Default safe motor offset for Low Right Leg
+static int32_t offset_low_right  = 11;
 
 struct Pose { int32_t ll, hr, hl, lr; };
-// Unified Logical Coordinates: 0 is always facing Left, 180 is always facing Right.
 static Pose poses[5] = {
-    {0, 0, 0, 0},        // sit (all facing left/0)
+    {0, 0, 0, 0},        // sit
     {90, 90, 90, 90},    // stand
     {90, 180, 180, 90},  // stretch_down
-    {0, 90, 90, 0},      // stretch_back (Low Right Leg corrected to 0)
+    {0, 90, 90, 0},      // stretch_back
     {90, 90, 90, 90}     // stop
 };
-// =========================================================
 
 static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_back", "stop"};
-static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"}; // Short NVS safe keys
+static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
 
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     int32_t final_angle = target_angle + offset;
     
-    // Safety clamp guard for the low right leg to prevent continuous rotation failure
     if (channel == SERVO_LOW_RIGHT_CH) {
         if (final_angle < 4) final_angle = 4;
     } else {
@@ -74,9 +67,6 @@ static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle,
 }
 
 static void apply_all_servos() {
-    // Left-side motors are physically flipped. We automatically correct them (180 - target) 
-    // so the rest of the firmware and Web UI treats 0 as left and 180 as right.
-    // We also invert the offset for left motors so a positive offset always means "further right".
     write_servo_calibrated(SERVO_LOW_LEFT_CH,   180 - target_low_left,  -offset_low_left);
     write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right,       offset_high_right);
     write_servo_calibrated(SERVO_HIGH_LEFT_CH,  180 - target_high_left, -offset_high_left);
@@ -92,9 +82,7 @@ static bool current_is_sit() {
 
 static void servo_animation_task(void *pv) {
     while(1) {
-        // Animation Loop allows uninterrupted triggered sensor animations to execute normally!
         if (active_animation == 1) { 
-            // Forward Walk Loop - Diagonal Trot Gait
             if (anim_state == 0) {
                 anim_pos += 4;
                 if (anim_pos >= 130) anim_state = 1;
@@ -103,19 +91,15 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos <= 50) anim_state = 0;
             }
             
-            // Pair 1: Front-Left and Back-Right (Move together)
             target_high_left = anim_pos;
             target_low_right = anim_pos;
-            
-            // Pair 2: Front-Right and Back-Left (Move opposite to Pair 1 to maintain balance)
             target_high_right = 180 - anim_pos;
             target_low_left = 180 - anim_pos;
             
             apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20)); // Animation frame rate
+            vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 2) {
-            // Backward Walk Loop - Reverse Phase Diagonal Trot
             if (anim_state == 0) {
                 anim_pos -= 4;
                 if (anim_pos <= 50) anim_state = 1;
@@ -124,11 +108,8 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 130) anim_state = 0;
             }
             
-            // Pair 1: Front-Left and Back-Right
             target_high_left = anim_pos;
             target_low_right = anim_pos;
-            
-            // Pair 2: Front-Right and Back-Left
             target_high_right = 180 - anim_pos;
             target_low_left = 180 - anim_pos;
             
@@ -136,7 +117,6 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 3) {
-            // Step Forward (Once)
             if (anim_state == 0) {
                 anim_pos += 4;
                 if (anim_pos >= 130) anim_state = 1;
@@ -147,7 +127,7 @@ static void servo_animation_task(void *pv) {
                 anim_pos += 4;
                 if (anim_pos >= 90) {
                     anim_pos = 90;
-                    active_animation = 0; // Terminate animation
+                    active_animation = 0;
                 }
             }
             
@@ -160,7 +140,6 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 4) {
-            // Step Backward (Once)
             if (anim_state == 0) {
                 anim_pos -= 4;
                 if (anim_pos <= 50) anim_state = 1;
@@ -171,7 +150,7 @@ static void servo_animation_task(void *pv) {
                 anim_pos -= 4;
                 if (anim_pos <= 90) {
                     anim_pos = 90;
-                    active_animation = 0; // Terminate animation
+                    active_animation = 0;
                 }
             }
             
@@ -184,63 +163,61 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 5) {
-            // Left Wave (High Left rotates 90 -> 180 -> 0 3 times, then back to 90 as fast as possible)
-            int step = 20; // Fast angular change
-            if (anim_state == 0) { // Cycle 1 Ascent
+            int step = 20;
+            if (anim_state == 0) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) { // Cycle 1 Descent
+            } else if (anim_state == 1) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) { // Cycle 2 Ascent
+            } else if (anim_state == 2) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) { // Cycle 2 Descent
+            } else if (anim_state == 3) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) { // Cycle 3 Ascent
+            } else if (anim_state == 4) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) { // Cycle 3 Descent
+            } else if (anim_state == 5) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) { // Return to neutral stand
+            } else if (anim_state == 6) {
                 anim_pos += step;
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
-                    active_animation = 0; // Stop and complete
+                    active_animation = 0;
                 }
             }
             target_high_left = anim_pos;
             apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(15)); // Fast frame update interval
+            vTaskDelay(pdMS_TO_TICKS(15));
             
         } else if (active_animation == 6) {
-            // Right Wave (High Right rotates 90 -> 180 -> 0 3 times, then back to 90 as fast as possible)
             int step = 20; 
-            if (anim_state == 0) { // Cycle 1 Ascent
+            if (anim_state == 0) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) { // Cycle 1 Descent
+            } else if (anim_state == 1) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) { // Cycle 2 Ascent
+            } else if (anim_state == 2) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) { // Cycle 2 Descent
+            } else if (anim_state == 3) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) { // Cycle 3 Ascent
+            } else if (anim_state == 4) {
                 anim_pos += step;
                 if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) { // Cycle 3 Descent
+            } else if (anim_state == 5) {
                 anim_pos -= step;
                 if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) { // Return to neutral stand
+            } else if (anim_state == 6) {
                 anim_pos += step;
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
-                    active_animation = 0; // Stop and complete
+                    active_animation = 0;
                 }
             }
             target_high_right = anim_pos;
@@ -248,7 +225,6 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(15));
             
         } else if (active_animation == 7) {
-            // Forward Crawl (Anchors low legs flat at 0, sweeps shoulders forward diagonally out of phase)
             if (anim_state == 0) {
                 anim_pos += 5;
                 if (anim_pos >= 135) anim_state = 1;
@@ -257,11 +233,9 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos <= 45) anim_state = 0;
             }
             
-            // Keep both low legs locked at 0 in a flat back-lean posture
             target_low_left = 0;
             target_low_right = 0;
             
-            // Sweep front shoulders out of phase to slide the torso forward
             target_high_left = anim_pos;
             target_high_right = 180 - anim_pos;
             
@@ -269,51 +243,44 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 8) {
-            // Sequential Stand Animation (Fast execution per limb with transit settling gaps):
-            // Step 1: High Right Shoulder (IO10 / target_high_right) to 90 fast.
-            // Step 2: Low Right Leg (IO9 / target_low_right) to 90 fast (after shoulder completes).
-            // Step 3: High Left Shoulder (IO11 / target_high_left) to 90 fast.
-            // Step 4: Low Left Leg (IO12 / target_low_left) to 90 fast.
-            
             if (anim_state == 0) {
-                target_high_right = 90; // Physical High Right Shoulder (IO10)
+                target_high_right = 90;
                 apply_all_servos();
                 wait_counter = 0;
                 anim_state = 1;
             } else if (anim_state == 1) {
                 wait_counter++;
-                if (wait_counter >= 10) { // 200ms transit gap
-                    target_low_right = 90; // Physical Low Right Leg (IO9)
+                if (wait_counter >= 10) {
+                    target_low_right = 90;
                     apply_all_servos();
                     wait_counter = 0;
                     anim_state = 2;
                 }
             } else if (anim_state == 2) {
                 wait_counter++;
-                if (wait_counter >= 10) { // 200ms transit gap
-                    target_high_left = 90; // Physical High Left Shoulder (IO11)
+                if (wait_counter >= 10) {
+                    target_high_left = 90;
                     apply_all_servos();
                     wait_counter = 0;
                     anim_state = 3;
                 }
             } else if (anim_state == 3) {
                 wait_counter++;
-                if (wait_counter >= 10) { // 200ms transit gap
-                    target_low_left = 90; // Physical Low Left Leg (IO12)
+                if (wait_counter >= 10) {
+                    target_low_left = 90;
                     apply_all_servos();
                     wait_counter = 0;
                     anim_state = 4;
                 }
             } else if (anim_state == 4) {
                 wait_counter++;
-                if (wait_counter >= 10) { // 200ms stabilization hold
-                    active_animation = 0; // Sequence finished, return to idle
+                if (wait_counter >= 10) {
+                    active_animation = 0;
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 9) {
-            // Back Left Wave (Low Left / IO12 rotates 90 -> 180 -> 0 3 times, then back to 90)
             int step = 20; 
             if (anim_state == 0) {
                 anim_pos += step;
@@ -345,7 +312,6 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(15));
 
         } else if (active_animation == 10) {
-            // Back Right Wave (Low Right / IO9 rotates 90 -> 180 -> 0 3 times, then back to 90)
             int step = 20; 
             if (anim_state == 0) {
                 anim_pos += step;
@@ -377,7 +343,6 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(15));
 
         } else if (active_animation == 11) {
-            // Leap Forward Loop
             if (anim_state == 0) {
                 target_high_left = 180;
                 target_high_right = 180;
@@ -386,7 +351,7 @@ static void servo_animation_task(void *pv) {
                 anim_state = 1;
             } else if (anim_state == 1) {
                 wait_counter++;
-                if (wait_counter >= 25) { // 25 * 20ms = 500ms
+                if (wait_counter >= 25) {
                     target_low_left = 180;
                     target_low_right = 180;
                     apply_all_servos();
@@ -395,7 +360,7 @@ static void servo_animation_task(void *pv) {
                 }
             } else if (anim_state == 2) {
                 wait_counter++;
-                if (wait_counter >= 25) { // 25 * 20ms = 500ms
+                if (wait_counter >= 25) {
                     target_low_left = 0;
                     target_low_right = 0;
                     apply_all_servos();
@@ -404,13 +369,13 @@ static void servo_animation_task(void *pv) {
                 }
             } else if (anim_state == 3) {
                 wait_counter++;
-                if (wait_counter >= 25) { // 25 * 20ms = 500ms
-                    anim_state = 1; // Loop back to setting low legs to 180
+                if (wait_counter >= 25) {
+                    anim_state = 1;
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(20));
         } else {
-            vTaskDelay(pdMS_TO_TICKS(50)); // Idle wait
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
     }
 }
@@ -418,13 +383,11 @@ static void servo_animation_task(void *pv) {
 void servo_controller_init() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        // Load Offsets
         nvs_get_i32(my_handle, "ll_off", &offset_low_left);
         nvs_get_i32(my_handle, "hr_off", &offset_high_right);
         nvs_get_i32(my_handle, "hl_off", &offset_high_left);
         nvs_get_i32(my_handle, "lr_off", &offset_low_right);
 
-        // Load Action Poses
         for (int i = 0; i < 5; i++) {
             char key[16];
             snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].ll);
@@ -454,23 +417,19 @@ void servo_controller_init() {
     chan_cfg.gpio_num = SERVO_HIGH_LEFT_PIN;  chan_cfg.channel = SERVO_HIGH_LEFT_CH;  ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_LOW_RIGHT_PIN;  chan_cfg.channel = SERVO_LOW_RIGHT_CH;  ledc_channel_config(&chan_cfg);
 
-    // CRITICAL CURRENT FIX: Do NOT apply active PWM on boot.
-    // Keep duty at 0 so servos remain completely unpowered (relaxed) until an explicit command is received.
-    // This completely prevents overcurrent shutdowns when plugged into a PC!
     active_animation = 0;
     target_low_left   = 90;
     target_high_right = 90;
     target_high_left  = 90;
     target_low_right  = 90;
     
-    // Explicitly pin to Core 0 so it NEVER interrupts the Wi-Fi/Web Server (Core 1)
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
     ESP_LOGI(TAG, "Hardware PWM Initialized (Relaxed on boot)");
 }
 
 void servo_set_target(const char* id, int angle) {
     if (sensor_is_safety_locked()) return;
-    active_animation = 0; // Manual override stops animations
+    active_animation = 0;
     
     if (strcmp(id, "low_left") == 0)   target_low_left = angle;
     if (strcmp(id, "high_right") == 0) target_high_right = angle;
@@ -486,7 +445,7 @@ void servo_set_target(const char* id, int angle) {
 
 void servo_set_target_silent(const char* id, int angle) {
     if (sensor_is_safety_locked()) return;
-    active_animation = 0; // Manual override stops animations
+    active_animation = 0;
     
     if (strcmp(id, "low_left") == 0)   target_low_left = angle;
     if (strcmp(id, "high_right") == 0) target_high_right = angle;
@@ -500,12 +459,11 @@ void servo_apply_targets() {
 }
 
 void servo_set_action(const char* action_name) {
-    if (sensor_is_safety_locked()) return; // Rejects manual command requests during safe lockout
+    if (sensor_is_safety_locked()) return;
     servo_set_action_bypass(action_name);
 }
 
 void servo_set_action_bypass(const char* action_name) {
-    // Directly executes poses and animations, skipping standard safety check hurdles
     if (strcmp(action_name, "forward") == 0) {
         if (active_animation != 1) {
             active_animation = 1;
@@ -547,12 +505,12 @@ void servo_set_action_bypass(const char* action_name) {
         wait_counter = 0;
     } else if (strcmp(action_name, "stand") == 0) {
         if (current_is_sit()) {
-            active_animation = 8; // Safely transition sequentially to stand up
+            active_animation = 8;
             anim_state = 0;
             anim_pos = 90;
             wait_counter = 0;
         } else {
-            active_animation = 0; // Cancel manual animations
+            active_animation = 0;
             target_low_left   = poses[1].ll;
             target_high_right = poses[1].hr;
             target_high_left  = poses[1].hl;
@@ -574,9 +532,8 @@ void servo_set_action_bypass(const char* action_name) {
         anim_state = 0;
         wait_counter = 0;
     } else if (strcmp(action_name, "none") == 0) {
-        // Explicitly configured to do nothing
     } else {
-        active_animation = 0; // Stop looping animations for static poses
+        active_animation = 0;
         for (int i = 0; i < 5; i++) {
             if (strcmp(action_name, pose_names[i]) == 0) {
                 target_low_left   = poses[i].ll;
@@ -621,7 +578,7 @@ void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, b
         for (int i = 0; i < 5; i++) {
             if (strcmp(target, pose_names[i]) == 0) {
                 poses[i].ll = ll; poses[i].hr = hr; poses[i].hl = hl; poses[i].lr = lr;
-                servo_set_action(pose_names[i]); // Trigger pose change to preview visually
+                servo_set_action(pose_names[i]);
                 
                 if (save_to_nvs) {
                     nvs_handle_t my_handle;
@@ -670,23 +627,19 @@ char* servo_get_calibrations_cpp() {
     snprintf(dbuf, 1024,
         "// =========================================================\n"
         "// ESPRobot Calibration Defaults\n"
-        "// Replace the block in servo_controller.cpp with these lines\n"
-        "// to permanently embed your custom actions into the firmware.\n"
         "// =========================================================\n\n"
         "static int32_t offset_low_left   = %ld;\n"
         "static int32_t offset_high_right = %ld;\n"
         "static int32_t offset_high_left  = %ld;\n"
         "static int32_t offset_low_right  = %ld;\n\n"
         "struct Pose { int32_t ll, hr, hl, lr; };\n"
-        "// Unified Logical Coordinates: 0 is always facing Left, 180 is always facing Right.\n"
         "static Pose poses[5] = {\n"
         "    {%ld, %ld, %ld, %ld},  // sit\n"
         "    {%ld, %ld, %ld, %ld},  // stand\n"
         "    {%ld, %ld, %ld, %ld},  // stretch_down\n"
         "    {%ld, %ld, %ld, %ld},  // stretch_back\n"
         "    {%ld, %ld, %ld, %ld}   // stop\n"
-        "};\n"
-        "// =========================================================\n",
+        "};\n",
         offset_low_left, offset_high_right, offset_high_left, offset_low_right,
         poses[0].ll, poses[0].hr, poses[0].hl, poses[0].lr,
         poses[1].ll, poses[1].hr, poses[1].hl, poses[1].lr,
