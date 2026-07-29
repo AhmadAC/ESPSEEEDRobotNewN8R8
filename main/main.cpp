@@ -278,6 +278,9 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
+    // ALWAYS initialize BLE Manager on boot regardless of profile
+    ble_manager_init();
+
     // 4. Boot Modular Components
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW (with Camera support)");
@@ -297,10 +300,6 @@ extern "C" void app_main(void) {
         audio_player_init(); 
         sensor_monitor_init();
         servo_controller_init();
-        
-        // CRITICAL FIX: ALWAYS start BLE, even in Wi-Fi mode. 
-        // This ensures the Android app can always provision new Wi-Fi credentials via Bluetooth.
-        ble_manager_init();
 
         if (strcmp(boot_mode, "bt") == 0) {
             ESP_LOGI(TAG, "Booting in BLUETOOTH Mode. (Wi-Fi Disabled)");
