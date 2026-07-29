@@ -63,114 +63,23 @@ static void process_ble_command(const char* cmd) {
         }
     }
 
-    // Strip "action:" prefix if present
-    if (strncmp(cmd, "action:", 7) == 0) {
-        cmd += 7;
-    }
+    // Strip "action:" or "claw:" or "claw_angle:" prefixes if present
+    const char* pcmd = cmd;
+    if (strncmp(pcmd, "action:", 7) == 0) pcmd += 7;
 
     // Direct String Commands for Quick App Controls
-    if (strcmp(cmd, "cam_flip") == 0 || strcmp(cmd, "/cam_flip") == 0) {
+    if (strcmp(pcmd, "cam_flip") == 0 || strcmp(pcmd, "/cam_flip") == 0) {
         cam_toggle_flip();
         return;
     }
-    if (strcmp(cmd, "audio_stop") == 0 || strcmp(cmd, "/audio_stop") == 0) {
+    if (strcmp(pcmd, "audio_stop") == 0 || strcmp(pcmd, "/audio_stop") == 0) {
         audio_stop();
-        return;
-    }
-    if (strcmp(cmd, "switch_to_ap") == 0 || strcmp(cmd, "/switch_to_ap") == 0) {
-        nvs_handle_t h;
-        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_set_u8(h, "force_ap", 1);
-            nvs_commit(h);
-            nvs_close(h);
-        }
-        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
-        return;
-    }
-    if (strcmp(cmd, "switch_to_wifi") == 0 || strcmp(cmd, "/switch_to_wifi") == 0) {
-        nvs_handle_t h;
-        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_set_u8(h, "force_ap", 0);
-            nvs_commit(h);
-            nvs_close(h);
-        }
-        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
         return;
     }
 
     // 2. Try parsing JSON payload
-    cJSON *json = cJSON_Parse(cmd);
+    cJSON *json = cJSON_Parse(pcmd);
     if (json != NULL) {
-        // Wi-Fi Credentials via JSON
-        cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
-        cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
-        if (!pass_item) pass_item = cJSON_GetObjectItem(json, "password");
-
-        if (ssid_item && ssid_item->valuestring && pass_item && pass_item->valuestring) {
-            ESP_LOGI(TAG, "Wi-Fi Credentials received via BLE JSON - SSID: %s", ssid_item->valuestring);
-            wifi_save_credentials(ssid_item->valuestring, pass_item->valuestring);
-            wifi_manager_connect_async(ssid_item->valuestring, pass_item->valuestring);
-            cJSON_Delete(json);
-            return;
-        }
-
-        // Mode Switching via JSON
-        cJSON *mode_item = cJSON_GetObjectItem(json, "mode");
-        if (mode_item && mode_item->valuestring) {
-            nvs_handle_t h;
-            if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-                nvs_set_str(h, "dev_mode", mode_item->valuestring);
-                nvs_commit(h);
-                nvs_close(h);
-            }
-            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
-            cJSON_Delete(json);
-            return;
-        }
-
-        // Camera Flip via JSON
-        cJSON *cam_flip = cJSON_GetObjectItem(json, "cam_flip");
-        if (cam_flip) {
-            cam_toggle_flip();
-        }
-
-        // Audio Volume via JSON
-        cJSON *vol_item = cJSON_GetObjectItem(json, "volume");
-        if (vol_item) {
-            audio_set_volume(vol_item->valueint);
-        }
-
-        // Audio Play via JSON
-        cJSON *snd_item = cJSON_GetObjectItem(json, "sound");
-        if (snd_item && snd_item->valuestring) {
-            audio_play(snd_item->valuestring);
-        }
-
-        // Ultrasonic Sensor Settings via JSON
-        cJSON *sen_en = cJSON_GetObjectItem(json, "enabled");
-        if (sen_en) {
-            sensor_set_enabled(cJSON_IsTrue(sen_en) || (sen_en->valueint != 0));
-        }
-        cJSON *sen_th = cJSON_GetObjectItem(json, "threshold");
-        if (sen_th) {
-            sensor_set_threshold(sen_th->valueint);
-        }
-        cJSON *sen_re = cJSON_GetObjectItem(json, "reaction_time");
-        if (sen_re) {
-            sensor_set_reaction_time(sen_re->valueint);
-        }
-        cJSON *trip_act = cJSON_GetObjectItem(json, "tripped_action");
-        cJSON *clear_act = cJSON_GetObjectItem(json, "cleared_action");
-        if (trip_act && clear_act && trip_act->valuestring && clear_act->valuestring) {
-            sensor_set_actions(trip_act->valuestring, clear_act->valuestring);
-        }
-        cJSON *atrip_act = cJSON_GetObjectItem(json, "tripped_audio");
-        cJSON *aclear_act = cJSON_GetObjectItem(json, "cleared_audio");
-        if (atrip_act && aclear_act && atrip_act->valuestring && aclear_act->valuestring) {
-            sensor_set_audio_actions(atrip_act->valuestring, aclear_act->valuestring);
-        }
-
-        // Claw Commands via JSON
         cJSON *claw_cmd = cJSON_GetObjectItem(json, "claw_cmd");
         if (!claw_cmd) claw_cmd = cJSON_GetObjectItem(json, "cmd");
         if (claw_cmd && claw_cmd->valuestring) {
@@ -183,17 +92,17 @@ static void process_ble_command(const char* cmd) {
             claw_set_angle(claw_angle->valueint);
         }
 
-        // Robot Actions via JSON
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item && act_item->valuestring) {
-            if (is_claw_mode) {
-                claw_execute_command(act_item->valuestring);
+            const char* act = act_item->valuestring;
+            if (is_claw_mode || strcmp(act, "open") == 0 || strcmp(act, "close") == 0 ||
+                strcmp(act, "half_open") == 0 || strcmp(act, "half_close") == 0) {
+                claw_execute_command(act);
             } else {
-                servo_set_action(act_item->valuestring);
+                servo_set_action(act);
             }
         }
 
-        // Individual Leg Servos via JSON
         cJSON *ll = cJSON_GetObjectItem(json, "ll");
         cJSON *lr = cJSON_GetObjectItem(json, "lr");
         cJSON *hl = cJSON_GetObjectItem(json, "hl");
@@ -211,22 +120,20 @@ static void process_ble_command(const char* cmd) {
         return;
     }
 
-    // 3. Fallback to Plain Text / CSV Commands
-    if (strncmp(cmd, "claw:", 5) == 0) {
-        claw_execute_command(cmd + 5);
-    } else if (strncmp(cmd, "claw_angle:", 11) == 0) {
-        claw_set_angle(atoi(cmd + 11));
-    } else if (is_claw_mode) {
-        if (strcmp(cmd, "open") == 0 || strcmp(cmd, "close") == 0 ||
-            strcmp(cmd, "half_open") == 0 || strcmp(cmd, "half_close") == 0) {
-            claw_execute_command(cmd);
-        } else if (cmd[0] >= '0' && cmd[0] <= '9') {
-            claw_set_angle(atoi(cmd));
+    // 3. Fallback to Plain Text Commands
+    if (strncmp(pcmd, "claw:", 5) == 0) {
+        claw_execute_command(pcmd + 5);
+    } else if (strncmp(pcmd, "claw_angle:", 11) == 0) {
+        claw_set_angle(atoi(pcmd + 11));
+    } else if (is_claw_mode || strcmp(pcmd, "open") == 0 || strcmp(pcmd, "close") == 0 ||
+               strcmp(pcmd, "half_open") == 0 || strcmp(pcmd, "half_close") == 0) {
+        if (pcmd[0] >= '0' && pcmd[0] <= '9') {
+            claw_set_angle(atoi(pcmd));
         } else {
-            claw_execute_command(cmd);
+            claw_execute_command(pcmd);
         }
     } else {
-        servo_set_action(cmd);
+        servo_set_action(pcmd);
     }
 }
 
