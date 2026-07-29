@@ -35,6 +35,11 @@ static void process_ble_command(const char* cmd) {
 
     ESP_LOGI(TAG, "BLE Command Received: %s", cmd);
 
+    // Strip "action:" prefix if present
+    if (strncmp(cmd, "action:", 7) == 0) {
+        cmd += 7;
+    }
+
     // 1. Try parsing JSON payload
     cJSON *json = cJSON_Parse(cmd);
     if (json != NULL) {
@@ -93,21 +98,6 @@ static void process_ble_command(const char* cmd) {
     }
 
     // 2. Fallback to Plain Text / CSV Commands
-    char* comma = strchr(cmd, ',');
-    if (comma && !is_claw_mode) {
-        char ssid_buf[33] = {0};
-        char pass_buf[65] = {0};
-        size_t ssid_len = comma - cmd;
-        if (ssid_len < sizeof(ssid_buf)) {
-            strncpy(ssid_buf, cmd, ssid_len);
-            strncpy(pass_buf, comma + 1, sizeof(pass_buf) - 1);
-            ESP_LOGI(TAG, "Wi-Fi Credentials received via BLE CSV - SSID: %s", ssid_buf);
-            wifi_save_credentials(ssid_buf, pass_buf);
-            wifi_manager_connect_async(ssid_buf, pass_buf);
-            return;
-        }
-    }
-
     if (strncmp(cmd, "claw:", 5) == 0) {
         claw_execute_command(cmd + 5);
     } else if (strncmp(cmd, "claw_angle:", 11) == 0) {
