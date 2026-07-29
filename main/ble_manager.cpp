@@ -8,12 +8,8 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "servo_controller.h"
 #include "claw_controller.h"
-#include "cam_controller.h"
-#include "audio_player.h"
-#include "sensor_monitor.h"
 #include "wifi_manager.h"
 #include "cJSON.h"
-#include "nvs.h"
 #include <string.h>
 
 static const char *TAG = "BLE_MGR";
@@ -34,11 +30,6 @@ bool ble_manager_is_connected() {
     return is_ble_connected_flag;
 }
 
-static void delayed_reboot_task(void *pvParameter) {
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    esp_restart();
-}
-
 static void process_ble_command(const char* cmd) {
     if (!cmd || strlen(cmd) == 0) return;
 
@@ -49,40 +40,10 @@ static void process_ble_command(const char* cmd) {
         cmd += 7;
     }
 
-    // Direct String Commands for Quick App Controls
-    if (strcmp(cmd, "cam_flip") == 0 || strcmp(cmd, "/cam_flip") == 0) {
-        cam_toggle_flip();
-        return;
-    }
-    if (strcmp(cmd, "audio_stop") == 0 || strcmp(cmd, "/audio_stop") == 0) {
-        audio_stop();
-        return;
-    }
-    if (strcmp(cmd, "switch_to_ap") == 0 || strcmp(cmd, "/switch_to_ap") == 0) {
-        nvs_handle_t h;
-        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_set_u8(h, "force_ap", 1);
-            nvs_commit(h);
-            nvs_close(h);
-        }
-        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
-        return;
-    }
-    if (strcmp(cmd, "switch_to_wifi") == 0 || strcmp(cmd, "/switch_to_wifi") == 0) {
-        nvs_handle_t h;
-        if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_set_u8(h, "force_ap", 0);
-            nvs_commit(h);
-            nvs_close(h);
-        }
-        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
-        return;
-    }
-
     // 1. Try parsing JSON payload
     cJSON *json = cJSON_Parse(cmd);
     if (json != NULL) {
-        // Wi-Fi Credentials via JSON
+        // Handle Wi-Fi Provisioning via JSON
         cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
         cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
         if (!pass_item) pass_item = cJSON_GetObjectItem(json, "password");
@@ -95,63 +56,7 @@ static void process_ble_command(const char* cmd) {
             return;
         }
 
-        // Mode Switching via JSON
-        cJSON *mode_item = cJSON_GetObjectItem(json, "mode");
-        if (mode_item && mode_item->valuestring) {
-            nvs_handle_t h;
-            if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
-                nvs_set_str(h, "dev_mode", mode_item->valuestring);
-                nvs_commit(h);
-                nvs_close(h);
-            }
-            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
-            cJSON_Delete(json);
-            return;
-        }
-
-        // Camera Flip via JSON
-        cJSON *cam_flip = cJSON_GetObjectItem(json, "cam_flip");
-        if (cam_flip) {
-            cam_toggle_flip();
-        }
-
-        // Audio Volume via JSON
-        cJSON *vol_item = cJSON_GetObjectItem(json, "volume");
-        if (vol_item) {
-            audio_set_volume(vol_item->valueint);
-        }
-
-        // Audio Play via JSON
-        cJSON *snd_item = cJSON_GetObjectItem(json, "sound");
-        if (snd_item && snd_item->valuestring) {
-            audio_play(snd_item->valuestring);
-        }
-
-        // Ultrasonic Sensor Settings via JSON
-        cJSON *sen_en = cJSON_GetObjectItem(json, "enabled");
-        if (sen_en) {
-            sensor_set_enabled(cJSON_IsTrue(sen_en) || (sen_en->valueint != 0));
-        }
-        cJSON *sen_th = cJSON_GetObjectItem(json, "threshold");
-        if (sen_th) {
-            sensor_set_threshold(sen_th->valueint);
-        }
-        cJSON *sen_re = cJSON_GetObjectItem(json, "reaction_time");
-        if (sen_re) {
-            sensor_set_reaction_time(sen_re->valueint);
-        }
-        cJSON *trip_act = cJSON_GetObjectItem(json, "tripped_action");
-        cJSON *clear_act = cJSON_GetObjectItem(json, "cleared_action");
-        if (trip_act && clear_act && trip_act->valuestring && clear_act->valuestring) {
-            sensor_set_actions(trip_act->valuestring, clear_act->valuestring);
-        }
-        cJSON *atrip_act = cJSON_GetObjectItem(json, "tripped_audio");
-        cJSON *aclear_act = cJSON_GetObjectItem(json, "cleared_audio");
-        if (atrip_act && aclear_act && atrip_act->valuestring && aclear_act->valuestring) {
-            sensor_set_audio_actions(atrip_act->valuestring, aclear_act->valuestring);
-        }
-
-        // Claw Commands via JSON
+        // Handle Claw commands via JSON
         cJSON *claw_cmd = cJSON_GetObjectItem(json, "claw_cmd");
         if (!claw_cmd) claw_cmd = cJSON_GetObjectItem(json, "cmd");
         if (claw_cmd && claw_cmd->valuestring) {
@@ -164,7 +69,7 @@ static void process_ble_command(const char* cmd) {
             claw_set_angle(claw_angle->valueint);
         }
 
-        // Robot Actions via JSON
+        // Handle Robot Actions via JSON
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item && act_item->valuestring) {
             if (is_claw_mode) {
@@ -174,7 +79,7 @@ static void process_ble_command(const char* cmd) {
             }
         }
 
-        // Individual Leg Servos via JSON
+        // Handle Individual Servos via JSON
         cJSON *ll = cJSON_GetObjectItem(json, "ll");
         cJSON *lr = cJSON_GetObjectItem(json, "lr");
         cJSON *hl = cJSON_GetObjectItem(json, "hl");
