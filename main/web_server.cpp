@@ -27,6 +27,27 @@ static void delayed_reboot_task(void *pvParameter) {
     esp_restart();
 }
 
+// Forward declaration for fallback checking
+static esp_err_t index_get_handler(httpd_req_t *req);
+
+static esp_err_t captive_portal_redirect(httpd_req_t *req) {
+    char host[64] = {0};
+    httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+    
+    // Prevent infinite redirect loops: if already hitting 192.168.4.1, just serve the normal UI
+    if (strcmp(host, "192.168.4.1") == 0 || strcmp(host, "192.168.4.1:80") == 0) {
+        if (strcmp(req->uri, "/") == 0 || strcmp(req->uri, "/generate_204") == 0) {
+            return index_get_handler(req);
+        }
+    }
+    
+    // Android/Apple Captive Portal Trigger
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 static esp_err_t index_get_handler(httpd_req_t *req) {
     if (is_cam_mode) {
         httpd_resp_set_status(req, "302 Found");
@@ -129,14 +150,6 @@ static esp_err_t cam_flip_post_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Connection", "close");
     cam_toggle_flip();
     httpd_resp_sendstr(req, "OK");
-    return ESP_OK;
-}
-
-static esp_err_t captive_portal_redirect(httpd_req_t *req) {
-    httpd_resp_set_hdr(req, "Connection", "close"); 
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
-    httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -327,7 +340,6 @@ static esp_err_t claw_get_handler(httpd_req_t *req) {
         if (httpd_query_key_value(buf, "angle", param, sizeof(param)) == ESP_OK) {
             int angle = atoi(param);
             claw_set_angle(angle);
-            snprintf(claw_last_command_str, sizeof(claw_last_command_str), "ANGLE: %d°", angle);
             httpd_resp_sendstr(req, "Angle Set");
             return ESP_OK;
         }
@@ -604,7 +616,7 @@ void web_server_init() {
             httpd_uri_t uri_swmode   = { .uri = "/switch_mode", .method = HTTP_POST, .handler = switch_mode_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
             
-            // Universal Claw Endpoints
+            // Universal Claw Endpoints (Available to App on HTTP)
             httpd_uri_t uri_claw     = { .uri = "/claw",   .method = HTTP_GET, .handler = claw_get_handler,   .user_ctx = NULL };
             httpd_uri_t uri_status   = { .uri = "/status", .method = HTTP_GET, .handler = claw_status_get_handler, .user_ctx = NULL };
 
@@ -665,6 +677,7 @@ void web_server_init() {
                 httpd_register_uri_handler(server, &uri_cflip);
             }
             
+            // Fallback route MUST be registered last
             httpd_uri_t uri_fallback = { .uri = "/*", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_register_uri_handler(server, &uri_fallback);
             
