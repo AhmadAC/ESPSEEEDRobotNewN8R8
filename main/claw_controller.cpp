@@ -56,11 +56,11 @@ void claw_controller_init() {
 
 void claw_set_angle(int logical_angle) {
     if (logical_angle < 0) logical_angle = 0;
-    if (logical_angle > SERVO_MAX_DEGREE) logical_angle = SERVO_MAX_DEGREE;
+    if (logical_angle > 138) logical_angle = 138; // Absolute MAX limit restricted to 138
     
-    // SAFE MECHANICAL LIMITS: Maps logical 0-180 to physical 60-170
+    // SAFE MECHANICAL LIMITS: Maps logical 0-138 to physical 60-138
     // This prevents the plastic gears from crushing against hard stops and stalling the motor
-    int physical_angle = 60 + (logical_angle * 110 / 180);
+    int physical_angle = 60 + (logical_angle * (138 - 60) / 138);
     
     uint32_t pulse_width = SERVO_MIN_PULSEWIDTH_US + (((SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) * physical_angle) / SERVO_MAX_DEGREE);
     uint32_t duty = (pulse_width * (1 << 14)) / 20000;
@@ -80,13 +80,13 @@ void claw_set_angle(int logical_angle) {
 void claw_execute_command(const char* cmd) {
     if (strcmp(cmd, "open") == 0) {
         strcpy(claw_last_command_str, "OPEN");
-        claw_set_angle(180);
+        claw_set_angle(138); // Open now defaults to 138 instead of 180
     } else if (strcmp(cmd, "close") == 0) {
         strcpy(claw_last_command_str, "CLOSED");
         claw_set_angle(0);
     } else if (strcmp(cmd, "half_open") == 0) {
         strcpy(claw_last_command_str, "HALF OPEN");
-        claw_set_angle(135);
+        claw_set_angle(100); // Scaled for 138 limits
     } else if (strcmp(cmd, "half_close") == 0) {
         strcpy(claw_last_command_str, "HALF CLOSED");
         claw_set_angle(45);

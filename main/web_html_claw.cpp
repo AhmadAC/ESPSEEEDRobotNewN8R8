@@ -1,4 +1,4 @@
-// main\web_html_claw.cpp
+// main/web_html_claw.cpp
 #include "web_html.h"
 
 // -------------------------------------------------------------
@@ -36,11 +36,11 @@ const char HTML_CLAW_UI[] = R"raw_html(
             <h2>Control Claw</h2>
             <div class="text-sm"><b>State:</b> <span id="lastcmd" style="color:#3b82f6;">Loading...</span> | <b>Angle:</b> <span id="curangle" style="color:#10b981;">--</span>°</div>
             
-            <input type="range" id="angleSlider" min="0" max="180" value="90" oninput="updateAngleLabel(this.value)" onchange="setAngle(this.value)">
+            <input type="range" id="angleSlider" min="0" max="138" value="90" oninput="updateAngleLabel(this.value)" onchange="setAngle(this.value)">
             <div class="text-sm" style="margin-bottom: 20px;">Target Slider: <span id="sliderVal">90</span>°</div>
 
             <div class="grid-2">
-                <button class="btn-green" onclick="c('open')">Open (180°)</button>
+                <button class="btn-green" onclick="c('open')">Open (138°)</button>
                 <button class="btn-red" onclick="c('close')">Close (0°)</button>
                 <button class="btn-blue" onclick="c('half_open')">Half Open</button>
                 <button class="btn-purple" onclick="c('half_close')">Half Close</button>
