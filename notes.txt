@@ -1,7 +1,8 @@
 ESP32-S3-Zero (N8R8) Firmware Build Notes
-- Target Hardware: Waveshare / Generic ESP32-S3-Zero N8R8 (8MB Flash, 8MB Octal PSRAM).
+- Target Hardware: Waveshare ESP32-S3-Zero N8R8 (8MB Flash, 8MB Octal PSRAM) mounted on Seeed robot carrier.
 - Multi-profile support configured: Robot Mode (4-leg kinematics), Claw Mode (MG90S), and Camera Profile.
-- Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 14-bit 50Hz PWM timers.
-- Audio I2S Amplifier mapped to D11 (GPIO 11 / LRC), D10 (GPIO 10 / BCLK), D12 (GPIO 12 / DIN).
+- Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 13-bit/14-bit 50Hz PWM timers.
+- Servo lines actively clamped LOW on boot with hardware pull-downs to prevent power-on twitches.
+- Audio output mapped to pin D10 (GPIO 10) using 62.5 kHz 8-bit LEDC PWM (single-wire speaker / buzzer compatible).
 - Ultrasonic obstacle sensor mapped to GPIO 5 (Trig) and GPIO 6 (Echo).
 - Native USB Serial/JTAG console and Web/BLE provisioning active.
