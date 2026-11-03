@@ -3,6 +3,10 @@ ESP32-S3-Zero (N8R8) Firmware Build Notes
 - Multi-profile support configured: Robot Mode (4-leg kinematics), Claw Mode (MG90S), and Camera Profile.
 - Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 13-bit/14-bit 50Hz PWM timers.
 - Servo lines actively clamped LOW on boot with hardware pull-downs to prevent power-on twitches.
-- Audio output mapped to pin D10 (GPIO 10) using 62.5 kHz 8-bit LEDC PWM (single-wire speaker / buzzer compatible).
+- Audio Subsystem: HT517 I2S Class-D Mono Power Amplifier:
+  * Waveshare Pin 10 (GPIO 10) -> HT517 module pin D10 (BCLK / SCK)
+  * Waveshare Pin 11 (GPIO 11) -> HT517 module pin D11 (LRC / WS)
+  * Waveshare Pin 12 (GPIO 12) -> HT517 module pin D12 (DIN / SD)
+  * Continuous I2S clocking enabled on boot so the HT517 PLL locks and unmutes without cutting off audio buffers.
 - Ultrasonic obstacle sensor mapped to GPIO 5 (Trig) and GPIO 6 (Echo).
 - Native USB Serial/JTAG console and Web/BLE provisioning active.
