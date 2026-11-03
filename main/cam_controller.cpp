@@ -18,25 +18,23 @@ static const char *TAG = "CAM_CTRL";
 
 extern bool is_claw_mode;
 
-// ----------------------------------------------------
-// Seeed Studio XIAO ESP32S3 Sense OV2640 Pinout
-// ----------------------------------------------------
+// Pins isolated away from audio (D10=10, D11=11, D12=12), servos (1,2,3,4), and sensor (5,6)
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
-#define XCLK_GPIO_NUM     10
-#define SIOD_GPIO_NUM     40
-#define SIOC_GPIO_NUM     39
-#define Y9_GPIO_NUM       48
-#define Y8_GPIO_NUM       11
-#define Y7_GPIO_NUM       12
-#define Y6_GPIO_NUM       14
-#define Y5_GPIO_NUM       16
-#define Y4_GPIO_NUM       18
-#define Y3_GPIO_NUM       17
-#define Y2_GPIO_NUM       15
-#define VSYNC_GPIO_NUM    38
-#define HREF_GPIO_NUM     47
-#define PCLK_GPIO_NUM     13
+#define XCLK_GPIO_NUM     -1
+#define SIOD_GPIO_NUM     -1
+#define SIOC_GPIO_NUM     -1
+#define Y9_GPIO_NUM       -1
+#define Y8_GPIO_NUM       -1
+#define Y7_GPIO_NUM       -1
+#define Y6_GPIO_NUM       -1
+#define Y5_GPIO_NUM       -1
+#define Y4_GPIO_NUM       -1
+#define Y3_GPIO_NUM       -1
+#define Y2_GPIO_NUM       -1
+#define VSYNC_GPIO_NUM    -1
+#define HREF_GPIO_NUM     -1
+#define PCLK_GPIO_NUM     -1
 
 volatile bool isCapturing = false;
 static volatile bool isConnected = false;
@@ -44,14 +42,17 @@ static volatile bool captureRequested = false;
 static volatile bool is_streaming = false;
 static bool espnow_initialized = false;
 static bool cam_flipped = true;
+static bool cam_initialized = false;
 
 static uint8_t pyControllerMac[6];
 static uint8_t cam_mac[6];
 
-// ----------------------------------------------------
-// Camera Video Orientation Flip Routine
-// ----------------------------------------------------
+bool cam_is_available() {
+    return cam_initialized;
+}
+
 void cam_toggle_flip() {
+    if (!cam_initialized) return;
     cam_flipped = !cam_flipped;
     sensor_t * s = esp_camera_sensor_get();
     if (s != NULL) {
@@ -60,9 +61,6 @@ void cam_toggle_flip() {
     }
 }
 
-// ----------------------------------------------------
-// ESP-NOW Receive Callback (ESP-IDF v5 Signature)
-// ----------------------------------------------------
 static void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
     const uint8_t *mac = info->src_addr;
     
@@ -100,20 +98,17 @@ static void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingD
     else if (len >= 11 && strncmp((const char*)incomingData, "pyCAM_STR_0", 11) == 0) {
         is_streaming = false;
     }
-    // Listen for PyController Gamepad Controller payloads
     else if (len == 6 && incomingData[0] == 67) {
         if (is_claw_mode) {
             uint8_t btns = incomingData[5];
-            uint8_t dpad = btns & 0x0F; // Mask out the A/B/X/Y face buttons
+            uint8_t dpad = btns & 0x0F;
             static uint8_t last_dpad = 8;
             
             if (dpad != last_dpad) {
-                // Check if the Right D-Pad (2=Right, 1=Up-Right, 3=Down-Right) was just pressed
                 bool is_right = (dpad == 2 || dpad == 1 || dpad == 3);
                 bool was_right = (last_dpad == 2 || last_dpad == 1 || last_dpad == 3);
                 
                 if (is_right && !was_right) {
-                    // Toggle Claw open/close state based on its current position
                     if (claw_current_angle > 90) {
                         claw_execute_command("close");
                     } else {
@@ -126,10 +121,8 @@ static void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingD
     }
 }
 
-// ----------------------------------------------------
-// Raw Packet Transmitter for ESP-NOW Stream
-// ----------------------------------------------------
 static void send_raw_image(camera_fb_t *fb) {
+    if (!fb) return;
     uint8_t raw_packet[1400];
     static uint16_t seq_num = 0;
     
@@ -164,12 +157,9 @@ static void send_raw_image(camera_fb_t *fb) {
     }
 }
 
-// ----------------------------------------------------
-// FreeRTOS Task: ESP-NOW Loop
-// ----------------------------------------------------
 static void cam_espnow_task(void *pvParameters) {
     while (1) {
-        if (isConnected) {
+        if (isConnected && cam_initialized) {
             if (captureRequested) {
                 captureRequested = false;
                 sensor_t * s = esp_camera_sensor_get();
@@ -194,9 +184,6 @@ static void cam_espnow_task(void *pvParameters) {
     }
 }
 
-// ----------------------------------------------------
-// FreeRTOS Task: Dedicated Port 81 TCP Stream
-// ----------------------------------------------------
 static void cam_stream_task(void *pvParameters) {
     int addr_family = AF_INET;
     int ip_protocol = IPPROTO_IP;
@@ -240,7 +227,6 @@ static void cam_stream_task(void *pvParameters) {
             continue;
         }
 
-        // Set short timeout to flush incoming HTTP GET request
         struct timeval timeout;
         timeout.tv_sec = 1; timeout.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -248,7 +234,6 @@ static void cam_stream_task(void *pvParameters) {
         char rx_buffer[128];
         recv(sock, rx_buffer, sizeof(rx_buffer), 0); 
         
-        // Disable timeout for the endless streaming loop
         timeout.tv_sec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
@@ -261,7 +246,7 @@ static void cam_stream_task(void *pvParameters) {
         ESP_LOGI(TAG, "Stream client connected to Port 81!");
 
         while (1) {
-            if (isCapturing) {
+            if (!cam_initialized || isCapturing) {
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -281,9 +266,9 @@ static void cam_stream_task(void *pvParameters) {
             int sent = send(sock, fb->buf, fb->len, 0);
             esp_camera_fb_return(fb);
 
-            if (sent < 0) break; // Client disconnected
+            if (sent < 0) break;
 
-            vTaskDelay(pdMS_TO_TICKS(60)); // Stream pacing
+            vTaskDelay(pdMS_TO_TICKS(60));
         }
         ESP_LOGI(TAG, "Stream client disconnected.");
         close(sock);
@@ -291,65 +276,9 @@ static void cam_stream_task(void *pvParameters) {
 }
 
 void cam_controller_init() {
-    camera_config_t config;
-    
-    // Repinned internal LEDC mapping to avoid conflicting with the 50Hz Servos on Timer 0
-    config.ledc_channel = LEDC_CHANNEL_5;
-    config.ledc_timer   = LEDC_TIMER_2;
-    
-    config.pin_d0       = Y2_GPIO_NUM;
-    config.pin_d1       = Y3_GPIO_NUM;
-    config.pin_d2       = Y4_GPIO_NUM;
-    config.pin_d3       = Y5_GPIO_NUM;
-    config.pin_d4       = Y6_GPIO_NUM;
-    config.pin_d5       = Y7_GPIO_NUM;
-    config.pin_d6       = Y8_GPIO_NUM;
-    config.pin_d7       = Y9_GPIO_NUM;
-    config.pin_xclk     = XCLK_GPIO_NUM;
-    config.pin_pclk     = PCLK_GPIO_NUM;
-    config.pin_vsync    = VSYNC_GPIO_NUM;
-    config.pin_href     = HREF_GPIO_NUM;
-    config.pin_sccb_sda = SIOD_GPIO_NUM;
-    config.pin_sccb_scl = SIOC_GPIO_NUM;
-    config.pin_pwdn     = PWDN_GPIO_NUM;
-    config.pin_reset    = RESET_GPIO_NUM;
-    
-    // Crucial: 20MHz is the optimal clock frequency for OV2640 standard operational synchronization
-    config.xclk_freq_hz = 20000000; 
-    config.pixel_format = PIXFORMAT_JPEG;
-    
-    // CRITICAL FIX: Changing grab mode to CAMERA_GRAB_WHEN_EMPTY completely halts mid-frame pointer 
-    // switching inside the DMA channel, successfully eliminating "NO-SOI" packet truncation
-    config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY; 
-
-    if (esp_psram_is_initialized()) {
-        config.fb_location = CAMERA_FB_IN_PSRAM;
-        config.frame_size = FRAMESIZE_UXGA; 
-        config.jpeg_quality = 12; // Stable quality floor to ensure high-res JPEG fits entirely within buffer limits
-        config.fb_count = 2;
-        ESP_LOGI(TAG, "PSRAM found. High resolution UXGA enabled.");
-    } else {
-        config.fb_location = CAMERA_FB_IN_DRAM;
-        config.frame_size = FRAMESIZE_SVGA;
-        config.jpeg_quality = 12;
-        config.fb_count = 1;
-        ESP_LOGW(TAG, "WARNING: PSRAM NOT FOUND! Falling back to low resolution SVGA.");
-    }
-
-    if (esp_camera_init(&config) != ESP_OK) {
-        ESP_LOGE(TAG, "Camera Init Failed");
-        return;
-    }
-    ESP_LOGI(TAG, "Camera hardware initialized!");
-
-    sensor_t * s = esp_camera_sensor_get();
-    if (s != NULL) {
-        s->set_vflip(s, cam_flipped ? 1 : 0);   
-        s->set_hmirror(s, cam_flipped ? 1 : 0); 
-        s->set_framesize(s, FRAMESIZE_QVGA); 
-    }
-
-    xTaskCreatePinnedToCore(cam_stream_task, "StreamTask", 4096, NULL, 4, NULL, 1);
+    // Camera is disabled by default on ESP32-S3-Zero N8R8 to prevent pin contention with audio
+    cam_initialized = false;
+    ESP_LOGI(TAG, "Camera module disabled by default on ESP32-S3-Zero N8R8 (GPIO 10, 11, 12 reserved for I2S audio).");
 }
 
 void cam_espnow_init() {
@@ -363,7 +292,7 @@ void cam_espnow_init() {
     }
 
     esp_now_register_recv_cb(onDataRecv);
-    ESP_LOGI(TAG, "ESP-NOW Subsystem initialized. Waiting for PyController broadcasts...");
+    ESP_LOGI(TAG, "ESP-NOW Subsystem initialized.");
     
     xTaskCreatePinnedToCore(cam_espnow_task, "ESPNOW_Task", 4096, NULL, 3, NULL, 1);
     espnow_initialized = true;

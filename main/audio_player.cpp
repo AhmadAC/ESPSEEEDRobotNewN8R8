@@ -24,11 +24,12 @@ static const char *TAG = "AUDIO";
 #define I2S_MIC_CLK_PIN GPIO_NUM_42
 #define I2S_MIC_DAT_PIN GPIO_NUM_41
 
-static i2s_chan_handle_t tx_chan;
-static i2s_chan_handle_t rx_chan;
+static i2s_chan_handle_t tx_chan = NULL;
+static i2s_chan_handle_t rx_chan = NULL;
+static bool is_tx_enabled = false;
 static int32_t current_volume = 50; // 0-100 Default volume
 static QueueHandle_t audio_queue;
-static volatile bool audio_stop_requested = false; // Flag to instantly break playback loops
+static volatile bool audio_stop_requested = false;
 
 // Access the embedded WAV file created by CMake
 extern const uint8_t dog_barking_wav_start[] asm("_binary_dog_barking_wav_start");
@@ -44,25 +45,29 @@ static void load_audio_nvs() {
     if (current_volume > 100) current_volume = 100;
 }
 
-// ----------------------------------------------------
-// Clears I2S DMA garbage data & completely disables output
-// ----------------------------------------------------
-static void silence_and_disable_speaker() {
-    int16_t silence_buf[256] = {0};
-    size_t bytes_written = 0;
-    
-    // Explicitly flush the active hardware ring descriptors with clear digital silence
-    for (int i = 0; i < 4; i++) {
-        i2s_channel_write(tx_chan, silence_buf, sizeof(silence_buf), &bytes_written, pdMS_TO_TICKS(10));
+static void enable_speaker_channel() {
+    if (tx_chan != NULL && !is_tx_enabled) {
+        esp_err_t err = i2s_channel_enable(tx_chan);
+        if (err == ESP_OK) {
+            is_tx_enabled = true;
+        }
     }
-    
-    // Shut down the I2S clocks and DMA pipeline to eliminate analog state static hiss
-    i2s_channel_disable(tx_chan);
 }
 
-// ----------------------------------------------------
-// FreeRTOS Task: Dedicated Port 82 Live Audio Stream
-// ----------------------------------------------------
+static void silence_and_disable_speaker() {
+    if (tx_chan == NULL) return;
+    
+    if (is_tx_enabled) {
+        int16_t silence_buf[256] = {0};
+        size_t bytes_written = 0;
+        for (int i = 0; i < 2; i++) {
+            i2s_channel_write(tx_chan, silence_buf, sizeof(silence_buf), &bytes_written, pdMS_TO_TICKS(10));
+        }
+        i2s_channel_disable(tx_chan);
+        is_tx_enabled = false;
+    }
+}
+
 static void audio_stream_task(void *pvParameters) {
     int addr_family = AF_INET;
     int ip_protocol = IPPROTO_IP;
@@ -148,7 +153,7 @@ static void audio_stream_task(void *pvParameters) {
         uint8_t buf[1024];
         while (1) {
             size_t bytes_read = 0;
-            esp_err_t err = i2s_channel_read(rx_chan, buf, sizeof(buf), &bytes_read, pdMS_TO_TICKS(100));
+            esp_err_t err = rx_chan ? i2s_channel_read(rx_chan, buf, sizeof(buf), &bytes_read, pdMS_TO_TICKS(100)) : ESP_FAIL;
             
             if (err == ESP_OK && bytes_read > 0) {
                 int16_t* pcm = (int16_t*)buf;
@@ -175,9 +180,6 @@ static void audio_stream_task(void *pvParameters) {
     }
 }
 
-// ----------------------------------------------------
-// FreeRTOS Task: Dedicated Port 83 Walkie-Talkie RX
-// ----------------------------------------------------
 static void audio_rx_stream_task(void *pvParameters) {
     int addr_family = AF_INET;
     int ip_protocol = IPPROTO_IP;
@@ -226,14 +228,13 @@ static void audio_rx_stream_task(void *pvParameters) {
         audio_stop();
         vTaskDelay(pdMS_TO_TICKS(50));
         
-        i2s_channel_disable(tx_chan);
+        silence_and_disable_speaker();
         i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000);
         i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
-        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
-        i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
-        i2s_channel_enable(tx_chan);
+        enable_speaker_channel();
 
-        uint8_t rx_buffer[1024];
+        uint8_t rx_buffer[512];
+        int16_t stereo_out[512];
         
         while (1) {
             int len = recv(sock, rx_buffer, sizeof(rx_buffer), 0);
@@ -242,19 +243,22 @@ static void audio_rx_stream_task(void *pvParameters) {
             }
 
             int16_t* pcm = (int16_t*)rx_buffer;
-            size_t samples = len / 2;
+            size_t mono_samples = len / 2;
             const float HARDWARE_POWER_LIMIT = 0.60f; 
             float vol_mult = ((float)current_volume / 100.0f) * HARDWARE_POWER_LIMIT;
 
-            for (size_t i = 0; i < samples; i++) {
+            for (size_t i = 0; i < mono_samples; i++) {
                 int32_t val = (int32_t)(pcm[i] * vol_mult);
                 if (val > 32767) val = 32767;
                 if (val < -32768) val = -32768;
-                pcm[i] = (int16_t)val;
+                stereo_out[i * 2]     = (int16_t)val;
+                stereo_out[i * 2 + 1] = (int16_t)val;
             }
 
             size_t bytes_written;
-            i2s_channel_write(tx_chan, rx_buffer, len, &bytes_written, portMAX_DELAY);
+            if (is_tx_enabled) {
+                i2s_channel_write(tx_chan, stereo_out, mono_samples * 4, &bytes_written, portMAX_DELAY);
+            }
         }
         
         ESP_LOGI(TAG, "Walkie-Talkie stream disconnected.");
@@ -275,9 +279,7 @@ static void audio_task(void *pvParameter) {
             if (strcmp(sound_req, "record_3s") == 0) {
                 ESP_LOGI(TAG, "Starting 3-second recording from PDM mic...");
                 uint32_t sample_rate = 16000;
-                uint16_t channels = 1;
-                uint16_t bit_depth = 16;
-                size_t data_size = sample_rate * (bit_depth / 8) * channels * 3; 
+                size_t data_size = sample_rate * sizeof(int16_t) * 3; 
                 
                 uint8_t* record_buffer = NULL;
 #ifdef CONFIG_SPIRAM
@@ -287,12 +289,9 @@ static void audio_task(void *pvParameter) {
                     record_buffer = (uint8_t*) malloc(data_size);
                 }
                 
-                if (record_buffer) {
-                    i2s_channel_disable(rx_chan);
-                    i2s_channel_enable(rx_chan);
-                    
+                if (record_buffer && rx_chan) {
                     audio_stop_requested = false;
-                    size_t chunk = sample_rate * (bit_depth / 8) * channels / 10;
+                    size_t chunk = sample_rate * sizeof(int16_t) / 10;
                     size_t total_read = 0;
                     
                     while (total_read < data_size && !audio_stop_requested) {
@@ -307,14 +306,10 @@ static void audio_task(void *pvParameter) {
                     } else if (total_read > 0) {
                         ESP_LOGI(TAG, "Recording complete (%lu bytes). Playing back...", (unsigned long)total_read);
                         
-                        i2s_channel_disable(tx_chan);
+                        silence_and_disable_speaker();
                         i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
                         i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
-                        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                            I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO
-                        );
-                        i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
-                        i2s_channel_enable(tx_chan);
+                        enable_speaker_channel();
                         
                         int16_t* pcm_samples = (int16_t*)record_buffer;
                         size_t num_samples = total_read / 2;
@@ -323,31 +318,22 @@ static void audio_task(void *pvParameter) {
                         const float MIC_GAIN = 4.0f; 
                         float vol_mult = ((float)current_volume / 100.0f) * HARDWARE_POWER_LIMIT * MIC_GAIN;
                         
-                        const size_t CHUNK_SAMPLES = 512; 
-                        int16_t out_buffer[CHUNK_SAMPLES];
+                        const size_t CHUNK_SAMPLES = 256; 
+                        int16_t stereo_out[CHUNK_SAMPLES * 2];
                         size_t bytes_written;
                         
                         for (size_t i = 0; i < num_samples; i += CHUNK_SAMPLES) {
-                            if (audio_stop_requested) break;
+                            if (audio_stop_requested || !is_tx_enabled) break;
                             size_t chunk_size = (num_samples - i < CHUNK_SAMPLES) ? (num_samples - i) : CHUNK_SAMPLES;
                             
                             for (size_t j = 0; j < chunk_size; j++) {
-                                if (current_volume == 0) {
-                                    out_buffer[j] = 0;
-                                } else {
-                                    int32_t val = (int32_t)(pcm_samples[i + j] * vol_mult);
-                                    if (val > 32767) val = 32767;
-                                    if (val < -32768) val = -32768;
-                                    out_buffer[j] = (int16_t)val;
-                                }
+                                int32_t val = (int32_t)(pcm_samples[i + j] * vol_mult);
+                                if (val > 32767) val = 32767;
+                                if (val < -32768) val = -32768;
+                                stereo_out[j * 2]     = (int16_t)val;
+                                stereo_out[j * 2 + 1] = (int16_t)val;
                             }
-                            i2s_channel_write(tx_chan, out_buffer, chunk_size * 2, &bytes_written, portMAX_DELAY);
-                        }
-                        
-                        if (audio_stop_requested) {
-                            ESP_LOGI(TAG, "Playback interrupted by STOP request.");
-                        } else {
-                            ESP_LOGI(TAG, "Playback finished.");
+                            i2s_channel_write(tx_chan, stereo_out, chunk_size * 4, &bytes_written, portMAX_DELAY);
                         }
                     }
                     free(record_buffer);
@@ -357,7 +343,7 @@ static void audio_task(void *pvParameter) {
             }
 
             // -------------------------------------------------------------
-            // PLAY STATIC WAV FILE
+            // PLAY STATIC WAV FILE (ALWAYS USE STEREO FRAMES FOR I2S DACS)
             // -------------------------------------------------------------
             const uint8_t* wav_start = NULL;
             const uint8_t* wav_end = NULL;
@@ -368,7 +354,6 @@ static void audio_task(void *pvParameter) {
             }
             
             if (wav_start != NULL && wav_end > wav_start) {
-                
                 uint32_t sample_rate = 44100;
                 uint16_t channels = 2;
                 uint16_t bit_depth = 16;
@@ -396,56 +381,54 @@ static void audio_task(void *pvParameter) {
                     }
                 }
 
-                if (audio_data != NULL && data_size > 0) {
-                    // Temporarily disable while configuring clock dynamically
-                    i2s_channel_disable(tx_chan);
+                if (audio_data != NULL && data_size > 0 && bit_depth == 16) {
+                    silence_and_disable_speaker();
                     
                     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
                     i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
                     
-                    i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                        I2S_DATA_BIT_WIDTH_16BIT, 
-                        channels == 2 ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO
-                    );
-                    i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
-                    
-                    i2s_channel_enable(tx_chan);
+                    enable_speaker_channel();
                     
                     if (audio_data + data_size > wav_end) {
                         data_size = wav_end - audio_data;
                     }
                     
                     int16_t* pcm_samples = (int16_t*)audio_data;
-                    size_t num_samples = data_size / 2; 
+                    size_t total_samples = data_size / 2;
                     
                     const float HARDWARE_POWER_LIMIT = 0.60f; 
                     float vol_mult = ((float)current_volume / 100.0f) * HARDWARE_POWER_LIMIT;
                     
-                    const size_t CHUNK_SAMPLES = 512; 
-                    int16_t out_buffer[CHUNK_SAMPLES];
+                    audio_stop_requested = false;
+                    const size_t CHUNK_SIZE = 256;
+                    int16_t stereo_buffer[CHUNK_SIZE * 2];
                     size_t bytes_written;
-                    
-                    audio_stop_requested = false; 
-                    
-                    for (size_t i = 0; i < num_samples; i += CHUNK_SAMPLES) {
-                        if (audio_stop_requested) {
-                            break; 
-                        }
-                        
-                        size_t chunk_size = (num_samples - i < CHUNK_SAMPLES) ? (num_samples - i) : CHUNK_SAMPLES;
-                        
-                        for (size_t j = 0; j < chunk_size; j++) {
-                            if (current_volume == 0) {
-                                out_buffer[j] = 0; 
-                            } else {
-                                out_buffer[j] = (int16_t)(pcm_samples[i + j] * vol_mult);
+
+                    if (channels == 1) {
+                        for (size_t i = 0; i < total_samples; i += CHUNK_SIZE) {
+                            if (audio_stop_requested || !is_tx_enabled) break;
+                            size_t cur_chunk = (total_samples - i < CHUNK_SIZE) ? (total_samples - i) : CHUNK_SIZE;
+                            for (size_t j = 0; j < cur_chunk; j++) {
+                                int32_t val = (int32_t)(pcm_samples[i + j] * vol_mult);
+                                if (val > 32767) val = 32767;
+                                if (val < -32768) val = -32768;
+                                stereo_buffer[j * 2]     = (int16_t)val;
+                                stereo_buffer[j * 2 + 1] = (int16_t)val;
                             }
+                            i2s_channel_write(tx_chan, stereo_buffer, cur_chunk * 4, &bytes_written, portMAX_DELAY);
                         }
-                        
-                        esp_err_t err = i2s_channel_write(tx_chan, out_buffer, chunk_size * 2, &bytes_written, portMAX_DELAY);
-                        if (err != ESP_OK) {
-                            ESP_LOGE(TAG, "I2S Buffer Write Failed: %s", esp_err_to_name(err));
-                            break; 
+                    } else {
+                        size_t stereo_frames = total_samples / 2;
+                        for (size_t i = 0; i < stereo_frames; i += CHUNK_SIZE) {
+                            if (audio_stop_requested || !is_tx_enabled) break;
+                            size_t cur_chunk = (stereo_frames - i < CHUNK_SIZE) ? (stereo_frames - i) : CHUNK_SIZE;
+                            for (size_t j = 0; j < cur_chunk * 2; j++) {
+                                int32_t val = (int32_t)(pcm_samples[(i * 2) + j] * vol_mult);
+                                if (val > 32767) val = 32767;
+                                if (val < -32768) val = -32768;
+                                stereo_buffer[j] = (int16_t)val;
+                            }
+                            i2s_channel_write(tx_chan, stereo_buffer, cur_chunk * 4, &bytes_written, portMAX_DELAY);
                         }
                     }
                     
@@ -455,7 +438,7 @@ static void audio_task(void *pvParameter) {
                         ESP_LOGI(TAG, "Playback finished.");
                     }
                 } else {
-                    ESP_LOGE(TAG, "Invalid WAV structure.");
+                    ESP_LOGE(TAG, "Invalid or unsupported WAV structure.");
                 }
             }
             silence_and_disable_speaker();
@@ -467,13 +450,13 @@ void audio_player_init() {
     load_audio_nvs();
     audio_queue = xQueueCreate(5, sizeof(char) * 32);
 
-    // Initialize External I2S TX Amplifier
+    // Initialize External I2S TX Amplifier with locked standard 2-slot stereo framing
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_chan, NULL));
 
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(44100),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = I2S_BCLK_PIN,
@@ -487,38 +470,30 @@ void audio_player_init() {
     };
     
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &std_cfg));
-    
-    // Keeping the speaker disabled on boot completely silences startup buzzing.
-    // It will dynamically spin up and down only when active audio tracks start.
-    i2s_channel_disable(tx_chan);
+    is_tx_enabled = false;
 
     // Initialize PDM RX channel for Microphone
     i2s_chan_config_t rx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-    ESP_ERROR_CHECK(i2s_new_channel(&rx_chan_cfg, NULL, &rx_chan));
-
-    i2s_pdm_rx_config_t pdm_rx_cfg = {
-        .clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(16000), 
-        .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
-        .gpio_cfg = {
-            .clk = I2S_MIC_CLK_PIN,
-            .din = I2S_MIC_DAT_PIN,
-            .invert_flags = {
-                .clk_inv = false,
+    if (i2s_new_channel(&rx_chan_cfg, NULL, &rx_chan) == ESP_OK) {
+        i2s_pdm_rx_config_t pdm_rx_cfg = {
+            .clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(16000), 
+            .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+            .gpio_cfg = {
+                .clk = I2S_MIC_CLK_PIN,
+                .din = I2S_MIC_DAT_PIN,
+                .invert_flags = {
+                    .clk_inv = false,
+                },
             },
-        },
-    };
-    
-    pdm_rx_cfg.slot_cfg.slot_mask = I2S_PDM_SLOT_LEFT;
-    
-    ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(rx_chan, &pdm_rx_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(rx_chan));
+        };
+        pdm_rx_cfg.slot_cfg.slot_mask = I2S_PDM_SLOT_LEFT;
+        if (i2s_channel_init_pdm_rx_mode(rx_chan, &pdm_rx_cfg) == ESP_OK) {
+            i2s_channel_enable(rx_chan);
+        }
+    }
 
     xTaskCreatePinnedToCore(audio_task, "audio_task", 4096, NULL, 4, NULL, 1);
-    
-    // TCP Port 82: Stream Robot Mic -> Phone Web Browser
     xTaskCreatePinnedToCore(audio_stream_task, "audio_stream_task", 4096, NULL, 3, NULL, 1);
-    
-    // TCP Port 83: Stream Phone Mic -> Robot Speaker (Walkie-Talkie)
     xTaskCreatePinnedToCore(audio_rx_stream_task, "audio_rx_stream_task", 4096, NULL, 3, NULL, 1);
 }
 
@@ -552,5 +527,5 @@ void audio_play(const char* sound_name) {
 void audio_stop() {
     audio_stop_requested = true; 
     xQueueReset(audio_queue);    
-    silence_and_disable_speaker(); // Turn off physical clocks instantly
+    silence_and_disable_speaker();
 }
