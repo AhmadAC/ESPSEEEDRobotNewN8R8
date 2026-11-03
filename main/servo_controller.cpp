@@ -11,11 +11,11 @@
 
 static const char *TAG = "SERVO";
 
-// Pinout mapping for Seeed XIAO ESP32S3 / ESP32-S3 Zero
-#define SERVO_LOW_LEFT_PIN   GPIO_NUM_1 // D0 (Back Left)
-#define SERVO_HIGH_RIGHT_PIN GPIO_NUM_2 // D1 (Front Right)
-#define SERVO_HIGH_LEFT_PIN  GPIO_NUM_3 // D2 (Front Left)
-#define SERVO_LOW_RIGHT_PIN  GPIO_NUM_4 // D3 (Back Right)
+// Pinout mapping for ESP32-S3 Zero N8R8
+#define SERVO_LOW_LEFT_PIN   GPIO_NUM_1 // GPIO 1 (Back Left)
+#define SERVO_HIGH_RIGHT_PIN GPIO_NUM_2 // GPIO 2 (Front Right)
+#define SERVO_HIGH_LEFT_PIN  GPIO_NUM_3 // GPIO 3 (Front Left)
+#define SERVO_LOW_RIGHT_PIN  GPIO_NUM_4 // GPIO 4 (Back Right)
 
 #define SERVO_LOW_LEFT_CH    LEDC_CHANNEL_0
 #define SERVO_HIGH_RIGHT_CH  LEDC_CHANNEL_2
@@ -424,7 +424,7 @@ void servo_controller_init() {
     target_low_right  = 90;
     
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Hardware PWM Initialized (Relaxed on boot)");
+    ESP_LOGI(TAG, "Hardware PWM Initialized for ESP32-S3-Zero (Relaxed on boot)");
 }
 
 void servo_set_target(const char* id, int angle) {
@@ -584,10 +584,10 @@ void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, b
                     nvs_handle_t my_handle;
                     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
                         char key[16];
-                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, ll);
-                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, hr);
-                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, hl);
-                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, lr);
+                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, ll);
+                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, hr);
+                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, hl);
+                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, lr);
                         nvs_commit(my_handle);
                         nvs_close(my_handle);
                     }
@@ -626,7 +626,7 @@ char* servo_get_calibrations_cpp() {
     char* dbuf = (char*)malloc(1024);
     snprintf(dbuf, 1024,
         "// =========================================================\n"
-        "// ESPRobot Calibration Defaults\n"
+        "// ESPRobot Calibration Defaults (ESP32-S3 Zero)\n"
         "// =========================================================\n\n"
         "static int32_t offset_low_left   = %ld;\n"
         "static int32_t offset_high_right = %ld;\n"

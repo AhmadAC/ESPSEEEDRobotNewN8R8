@@ -15,12 +15,12 @@
 
 static const char *TAG = "AUDIO";
 
-// Pinout mapping for Seeed XIAO ESP32S3 external I2S Amplifier
-#define I2S_LRC_PIN  GPIO_NUM_7 // D8
-#define I2S_BCLK_PIN GPIO_NUM_8 // D9
-#define I2S_DIN_PIN  GPIO_NUM_9 // D10
+// Pinout mapping for ESP32-S3 Zero external I2S Amplifier (MAX98357A / PCM5102)
+#define I2S_LRC_PIN  GPIO_NUM_7 // GPIO 7 (LRC / WS)
+#define I2S_BCLK_PIN GPIO_NUM_8 // GPIO 8 (BCLK)
+#define I2S_DIN_PIN  GPIO_NUM_9 // GPIO 9 (DIN)
 
-// Pinout mapping for Seeed XIAO ESP32S3 Sense INTERNAL PDM Microphone
+// Pinout mapping for optional external PDM / I2S Microphone on ESP32-S3 Zero
 #define I2S_MIC_CLK_PIN GPIO_NUM_42
 #define I2S_MIC_DAT_PIN GPIO_NUM_41
 
@@ -273,7 +273,7 @@ static void audio_task(void *pvParameter) {
             // RECORD 3 SECONDS FROM PDM MIC & PLAY IT BACK
             // -------------------------------------------------------------
             if (strcmp(sound_req, "record_3s") == 0) {
-                ESP_LOGI(TAG, "Starting 3-second recording from internal PDM mic...");
+                ESP_LOGI(TAG, "Starting 3-second recording from PDM mic...");
                 uint32_t sample_rate = 16000;
                 uint16_t channels = 1;
                 uint16_t bit_depth = 16;
@@ -488,11 +488,11 @@ void audio_player_init() {
     
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &std_cfg));
     
-    // CRITICAL FIX: Keeping the speaker disabled on boot completely silences startup buzzing.
+    // Keeping the speaker disabled on boot completely silences startup buzzing.
     // It will dynamically spin up and down only when active audio tracks start.
     i2s_channel_disable(tx_chan);
 
-    // Initialize Internal PDM RX channel for Microphone
+    // Initialize PDM RX channel for Microphone
     i2s_chan_config_t rx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&rx_chan_cfg, NULL, &rx_chan));
 

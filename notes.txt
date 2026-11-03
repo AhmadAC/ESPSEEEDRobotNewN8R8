@@ -1,1 +1,7 @@
-this is the latest code, has multiple functions and works well with the esp seeed
+ESP32-S3-Zero (N8R8) Firmware Build Notes
+- Target Hardware: Waveshare / Generic ESP32-S3-Zero N8R8 (8MB Flash, 8MB Octal PSRAM).
+- Multi-profile support configured: Robot Mode (4-leg kinematics), Claw Mode (MG90S), and Camera Profile.
+- Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 14-bit 50Hz PWM timers.
+- Audio I2S Amplifier mapped to GPIO 7 (LRC), GPIO 8 (BCLK), GPIO 9 (DIN).
+- Ultrasonic obstacle sensor mapped to GPIO 5 (Trig) and GPIO 6 (Echo).
+- Native USB Serial/JTAG console and Web/BLE provisioning active.

@@ -82,7 +82,7 @@ const char html_part1[] = R"raw_html(<!DOCTYPE html>
 </head>
 <body>
 <div class='container'>
-    <div class="status-bar">ESPRobot Control Dashboard</div>
+    <div class="status-bar">ESPRobot Control Dashboard (ESP32-S3 Zero)</div>
 
     <div class='card'>
         <h2>Wi-Fi Provisioning</h2>
@@ -196,19 +196,19 @@ const char html_part2[] = R"raw_html(
 
         <div class='grid'>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
+                <div class='ctrl-header'><span>Low Left Leg (GPIO 1)</span><span id='val_low_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
+                <div class='ctrl-header'><span>High Left Shoulder (GPIO 3)</span><span id='val_high_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
+                <div class='ctrl-header'><span>Low Right Leg (GPIO 4)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
+                <div class='ctrl-header'><span>High Right Shoulder (GPIO 2)</span><span id='val_high_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
             </div>
         </div>

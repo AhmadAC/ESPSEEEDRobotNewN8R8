@@ -1,4 +1,4 @@
-name: Compile Xiao ESP32S3 Firmware
+name: Compile ESP32-S3 Zero N8R8 Firmware
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
           mkdir -p build_out
           
           echo "=========================================="
-          echo "Compiling ESPSEEEDRobot Project"
+          echo "Compiling ESP32-S3 Zero N8R8 Project"
           echo "=========================================="
           
           # Auto-repair spaces to equals signs in sdkconfig.defaults
@@ -68,7 +68,7 @@ jobs:
           # Generate a Web Flasher Manifest for 1-click installation via WebSerial tools
           echo "Generating Web Flasher manifest.json..."
           echo '{' > build_out/manifest.json
-          echo '  "name": "ESPSEEEDRobot",' >> build_out/manifest.json
+          echo '  "name": "ESP32S3_Zero_Robot",' >> build_out/manifest.json
           echo '  "version": "1.0.0",' >> build_out/manifest.json
           echo '  "builds": [' >> build_out/manifest.json
           echo "    {" >> build_out/manifest.json
@@ -85,5 +85,5 @@ jobs:
       - name: Upload C++ Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: seeed_xiao_esp32s3-binaries
+          name: esp32_s3_zero_n8r8-binaries
           path: build_out/
