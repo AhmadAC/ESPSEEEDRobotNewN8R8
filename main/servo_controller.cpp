@@ -417,6 +417,12 @@ void servo_controller_init() {
     chan_cfg.gpio_num = SERVO_HIGH_LEFT_PIN;  chan_cfg.channel = SERVO_HIGH_LEFT_CH;  ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_LOW_RIGHT_PIN;  chan_cfg.channel = SERVO_LOW_RIGHT_CH;  ledc_channel_config(&chan_cfg);
 
+    // Stop output pulses immediately on boot to keep all leg servos completely unpowered and relaxed
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_LEFT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_RIGHT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_LEFT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_RIGHT_CH, 0);
+
     active_animation = 0;
     target_low_left   = 90;
     target_high_right = 90;
@@ -424,7 +430,7 @@ void servo_controller_init() {
     target_low_right  = 90;
     
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Hardware PWM Initialized for ESP32-S3-Zero (Relaxed on boot)");
+    ESP_LOGI(TAG, "Hardware PWM Initialized for ESP32-S3-Zero (Relaxed on boot, no movement)");
 }
 
 void servo_set_target(const char* id, int angle) {

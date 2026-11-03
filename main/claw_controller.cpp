@@ -47,11 +47,13 @@ void claw_controller_init() {
     ledc_channel.hpoint         = 0;
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 
+    // Force PWM off immediately on boot so the motor does not turn or twitch
+    ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
+
     // Create 1-second timer to turn off the servo after movement completes
     claw_relax_timer = xTimerCreate("claw_relax", pdMS_TO_TICKS(1000), pdFALSE, NULL, claw_relax_cb);
 
-    ESP_LOGI(TAG, "MG90S Claw initialized on GPIO %d", SERVO_PIN);
-    claw_set_angle(90); 
+    ESP_LOGI(TAG, "MG90S Claw initialized on GPIO %d (Relaxed on boot, no movement)", SERVO_PIN);
 }
 
 void claw_set_angle(int logical_angle) {
