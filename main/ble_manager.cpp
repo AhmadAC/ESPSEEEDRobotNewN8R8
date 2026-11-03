@@ -34,11 +34,6 @@ bool ble_manager_is_connected() {
     return is_ble_connected_flag;
 }
 
-static void delayed_reboot_task(void *pvParameter) {
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    esp_restart();
-}
-
 static void process_ble_command(const char* cmd) {
     if (!cmd || strlen(cmd) == 0) return;
 
@@ -179,7 +174,8 @@ static const struct ble_gatt_chr_def gatt_chrs[] = {
         .descriptors = nullptr,
         .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         .min_key_size = 0,
-        .val_handle = nullptr
+        .val_handle = nullptr,
+        .cpfd = nullptr
     },
     {
         .uuid = (const ble_uuid_t *)&wifi_creds_uuid,
@@ -188,7 +184,8 @@ static const struct ble_gatt_chr_def gatt_chrs[] = {
         .descriptors = nullptr,
         .flags = BLE_GATT_CHR_F_WRITE,
         .min_key_size = 0,
-        .val_handle = nullptr
+        .val_handle = nullptr,
+        .cpfd = nullptr
     },
     {
         .uuid = (const ble_uuid_t *)&ip_addr_uuid,
@@ -197,7 +194,8 @@ static const struct ble_gatt_chr_def gatt_chrs[] = {
         .descriptors = nullptr,
         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
         .min_key_size = 0,
-        .val_handle = &ip_chr_val_handle
+        .val_handle = &ip_chr_val_handle,
+        .cpfd = nullptr
     },
     {}
 };
@@ -242,7 +240,6 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
 
         case BLE_GAP_EVENT_SUBSCRIBE:
             ESP_LOGI(TAG, "BLE Client Subscribed to Characteristic");
-            // If they subscribe to the IP characteristic, instantly push the current IP to them!
             if (event->subscribe.attr_handle == ip_chr_val_handle) {
                 if (strcmp(current_ip, "0.0.0.0") != 0) {
                     struct os_mbuf *om = ble_hs_mbuf_from_flat(current_ip, strlen(current_ip));
