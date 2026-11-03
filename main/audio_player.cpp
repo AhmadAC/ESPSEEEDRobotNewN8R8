@@ -16,9 +16,9 @@
 static const char *TAG = "AUDIO";
 
 // Pinout mapping for ESP32-S3 Zero external I2S Amplifier (MAX98357A / PCM5102)
-#define I2S_LRC_PIN  GPIO_NUM_7 // GPIO 7 (LRC / WS)
-#define I2S_BCLK_PIN GPIO_NUM_8 // GPIO 8 (BCLK)
-#define I2S_DIN_PIN  GPIO_NUM_9 // GPIO 9 (DIN)
+#define I2S_LRC_PIN  GPIO_NUM_11 // D11 (LRC / WS)
+#define I2S_BCLK_PIN GPIO_NUM_10 // D10 (BCLK)
+#define I2S_DIN_PIN  GPIO_NUM_12 // D12 (DIN)
 
 // Pinout mapping for optional external PDM / I2S Microphone on ESP32-S3 Zero
 #define I2S_MIC_CLK_PIN GPIO_NUM_42
