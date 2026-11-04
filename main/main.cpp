@@ -13,8 +13,10 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 
 // Modular Component Headers
+#include "logger.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
 #include "servo_controller.h"
@@ -54,7 +56,17 @@ static void console_read_task(void *pvParameter) {
             } else if (c == '\r' || c == '\n') {
                 if (cmd_idx > 0) {
                     cmd[cmd_idx] = '\0';
-                    if (strcmp(cmd, "reset") == 0) {
+                    
+                    // --- Persistent Log Inspection Commands ---
+                    if (strcmp(cmd, "log") == 0 || strcmp(cmd, "logs") == 0 || strcmp(cmd, "cat log") == 0) {
+                        logger_print_all();
+                    } else if (strcmp(cmd, "log tail") == 0) {
+                        logger_print_tail(50);
+                    } else if (strcmp(cmd, "log clear") == 0 || strcmp(cmd, "clear log") == 0) {
+                        logger_clear();
+                    } else if (strcmp(cmd, "log size") == 0) {
+                        printf("[LOGGER] Current debug log file size: %d bytes\n", (int)logger_get_size());
+                    } else if (strcmp(cmd, "reset") == 0) {
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                             nvs_erase_all(h);
@@ -167,41 +179,48 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // IMMEDIATELY clamp servo pins to prevent boot-up twitch and massive stall current.
-    // We use a clean gpio_config to force LOW. Using gpio_reset_pin() causes a microsecond glitch 
-    // to the hardware default state (which is a Pull-Up on GPIO 3), drawing >2A and crashing the battery!
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << 1) | (1ULL << 2) | (1ULL << 3) | (1ULL << 4);
-    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&io_conf);
-    
+    // 1. HARD CLAMP ALL SERVO LINES TO STRICT 0V OUTPUT IMMEDIATELY.
+    gpio_config_t servo_io_cfg = {};
+    servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
+    servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
+    servo_io_cfg.pin_bit_mask = (1ULL << GPIO_NUM_1) | (1ULL << GPIO_NUM_2) |
+                                (1ULL << GPIO_NUM_3) | (1ULL << GPIO_NUM_4);
+    servo_io_cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    servo_io_cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+    gpio_config(&servo_io_cfg);
+
     gpio_set_level(GPIO_NUM_1, 0);
     gpio_set_level(GPIO_NUM_2, 0);
     gpio_set_level(GPIO_NUM_3, 0);
     gpio_set_level(GPIO_NUM_4, 0);
-    
-    // Give the battery time to recover from any initial power-on transients (like servo capacitor inrush).
-    // 2000ms ensures the 5V rail is rock solid before we turn on the heavy Wi-Fi radio.
-    vTaskDelay(pdMS_TO_TICKS(2000));
 
-    // 1. Initialize Non-Volatile Storage (NVS)
+    rtc_gpio_pullup_dis(GPIO_NUM_1);
+    rtc_gpio_pulldown_en(GPIO_NUM_1);
+    rtc_gpio_pullup_dis(GPIO_NUM_2);
+    rtc_gpio_pulldown_en(GPIO_NUM_2);
+    rtc_gpio_pullup_dis(GPIO_NUM_3);
+    rtc_gpio_pulldown_en(GPIO_NUM_3);
+    rtc_gpio_pullup_dis(GPIO_NUM_4);
+    rtc_gpio_pulldown_en(GPIO_NUM_4);
+
+    // 2. Initialize Non-Volatile Storage (NVS)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    // 3. Initialize Flash File Logger (Captures logs to /spiffs/debug.log on battery)
+    logger_init();
+
     esp_log_level_set("wifi", ESP_LOG_ERROR);    
     esp_log_level_set("cam_hal", ESP_LOG_NONE);  
 
-    // 2. Setup Base Network Event Loop
+    // 4. Setup Base Network Event Loop
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // 3. Detect Saved Device & Boot Mode
+    // 5. Detect Saved Device & Boot Mode
     nvs_handle_t my_handle;
     char dev_mode[16] = "robot";
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -213,9 +232,7 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // 4. Boot Modular Components
-    // WE INITIALIZE WI-FI AND WEB SERVER FIRST!
-    // This guarantees that the Wi-Fi AP stands up cleanly without servo current spiking the battery.
+    // 6. Start Wi-Fi AP + Web Server FIRST with servos strictly dormant.
     ESP_LOGI(TAG, "Starting Wi-Fi and Web Server FIRST to ensure connectivity on battery");
     wifi_manager_init();
     web_server_init();
@@ -236,8 +253,8 @@ extern "C" void app_main(void) {
         servo_controller_init();
     }
 
-    // 5. Start non-blocking USB Serial/JTAG console task
+    // 7. Start non-blocking USB Serial/JTAG console task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "Boot Sequence Complete!");
+    ESP_LOGI(TAG, "Boot Sequence Complete! Servos dormant, Wi-Fi Server Active, Logger running.");
 }

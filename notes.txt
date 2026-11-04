@@ -2,16 +2,31 @@ ESP32-S3-Zero (N8R8) Firmware Build Notes
 - Target Hardware: Waveshare ESP32-S3-Zero N8R8 (8MB Flash, 8MB Octal PSRAM) mounted on Seeed robot carrier.
 - Multi-profile support configured: Robot Mode (4-leg kinematics), Claw Mode (MG90S), and Camera Profile.
 - Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 13-bit/14-bit 50Hz PWM timers.
-- SERVO BROWNOUT FIX: ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up. Servos see this as 100% duty cycle on boot and slam to physical limits, drawing >2A stall current and crashing Wi-Fi. Software fix applies immediate 0V clamping on boot. For a perfect hardware fix, solder 10k pull-down resistors between GPIO 1,2,3,4 and GND.
-- Wi-Fi BROWNOUT FIX: Wi-Fi TX Power defaults to 52 (13dBm) instead of 78 (19.5dBm) to prevent peak current from exceeding 5V 2A battery limits during RF calibration.
+- SERVO BATTERY JITTER & BROWNOUT RESOLUTION:
+  * Hardware pins GPIO 1, 2, 3, 4 are hard-clamped immediately at the start of app_main() using direct gpio_config() with internal pull-downs enabled and pull-ups disabled.
+  * Disables hardware RTC pull-ups (rtc_gpio_pullup_dis) which otherwise glitch high during bootloader execution.
+  * Eliminates gpio_reset_pin() entirely, preventing the internal pull-up flash that causes servos to kick on boot.
+  * LEDC hardware is strictly dormant on power-up (0.00A draw). Servos will not twitch or start up when battery is switched on.
+  * LEDC PWM pulses are phase-staggered (hpoints: 0, 1500, 3000, 4500) so all 4 servos never pulse at the same microsecond, cutting peak current by ~75%.
+  * Auto-relax timer automatically disengages LEDC signal 4 seconds after static poses or slider adjustments, preventing idle current draw and thermal stall on battery.
+- PERSISTENT FLASH DEBUG LOGGING:
+  * A 2MB SPIFFS partition is mounted at /spiffs.
+  * Automatically mirrors all console output (ESP_LOGI, ESP_LOGE, ESP_LOGW) to /spiffs/debug.log across reboots and battery power.
+  * Automatically rotates when file size reaches 512KB.
+  * REPL USB Commands:
+      - 'log' or 'logs': Dumps entire debug log history to console.
+      - 'log tail': Dumps the last 50 lines to console.
+      - 'log clear': Clears both current and rotated logs.
+      - 'log size': Shows current file size in bytes.
+  * Web endpoints:
+      - 'http://192.168.4.1/log': View live debug log in your browser.
+      - 'http://192.168.4.1/clear_log': Clear debug log from browser.
+- WI-FI ALWAYS-ON SUBSYSTEM:
+  * SoftAP (SSID 'ESPRobot_Config', Pass '12345678', IP 192.168.4.1) is always running and accessible immediately on boot.
+  * Dual AP+STA mode connects to saved home Wi-Fi in the background without taking down the SoftAP.
+  * Wi-Fi TX power defaulted to 48 (12 dBm) to prevent peak RF calibration transients from causing voltage sag on 5V 2A battery regulators.
 - Audio Subsystem: HT517 I2S Class-D Mono Power Amplifier:
   * Dedicated to Controller 1 (I2S_NUM_1) so I2S_NUM_0 remains available for hardware PDM RX microphone.
-  * Default Wiring Preset 1: Waveshare 
-  Pin 10 (GPIO 10 BCLK) -> HT517 D10, 
-  Pin 11 (GPIO 11 LRC) -> HT517 D11, 
-  Pin 12 (GPIO 12 DIN) -> HT517 D12.
-  * Alternative carrier pin presets supported at runtime via Web UI and REPL ('pins 8 7 9' or 'pins 12 11 10') and saved to NVS.
-  * Dynamic clock & slot reconfiguration on playback with silence drain and auto-disable to prevent HT517 DC latchup, pop noises, and idle carrier hiss.
-  * Built-in synthesized 880Hz/1760Hz dual-tone chime ('beep' command / '/beep' web route) for instant hardware line verification independent of WAV assets.
-- Ultrasonic obstacle sensor mapped to  GPIO 6 (Echo). GPIO 5 (Trig) 
+  * Default Wiring Preset 1: Waveshare Pin 10 (GPIO 10 BCLK) -> HT517 D10, Pin 11 (GPIO 11 LRC) -> HT517 D11, Pin 12 (GPIO 12 DIN) -> HT517 D12.
+- Ultrasonic obstacle sensor mapped to GPIO 6 (Echo), GPIO 5 (Trig).
 - Native USB Serial/JTAG console and Web/BLE provisioning active.

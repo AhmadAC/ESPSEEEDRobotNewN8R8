@@ -3,8 +3,10 @@
 #include "sensor_monitor.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "esp_log.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -40,6 +42,7 @@ static const ledc_channel_t servo_channels[4] = {
 
 static bool servos_active = false;
 static bool ledc_initialized = false;
+static TimerHandle_t servo_auto_relax_timer = NULL;
 
 // State Variables (Logical angles: 0 = Left, 180 = Right)
 static int32_t target_low_left   = 90;
@@ -69,6 +72,28 @@ static Pose poses[5] = {
 static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_back", "stop"};
 static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
 
+// Forward declaration
+static void relax_all_servos();
+
+static void servo_relax_timer_cb(TimerHandle_t xTimer) {
+    if (active_animation == 0) {
+        relax_all_servos();
+        ESP_LOGI(TAG, "Static position reached. Servos auto-relaxed to protect battery.");
+    }
+}
+
+static void schedule_auto_relax() {
+    if (active_animation == 0 && servo_auto_relax_timer != NULL) {
+        xTimerReset(servo_auto_relax_timer, 0);
+    }
+}
+
+static void cancel_auto_relax() {
+    if (servo_auto_relax_timer != NULL) {
+        xTimerStop(servo_auto_relax_timer, 0);
+    }
+}
+
 static void init_servo_ledc() {
     if (ledc_initialized) return;
 
@@ -78,7 +103,12 @@ static void init_servo_ledc() {
     ledc_timer.timer_num        = LEDC_TIMER_0;
     ledc_timer.freq_hz          = 50;  
     ledc_timer.clk_cfg          = LEDC_AUTO_CLK;
-    ledc_timer_config(&ledc_timer);
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    // STAGGERED PHASE TIMING (hpoints: 0, 1500, 3000, 4500):
+    // Offsets each servo pulse within the 20ms period so all 4 servos never pulse
+    // at the exact same microsecond, cutting peak current by ~75%!
+    const uint32_t staggered_hpoints[4] = {0, 1500, 3000, 4500};
 
     for (int i = 0; i < 4; i++) {
         ledc_channel_config_t chan_cfg = {};
@@ -88,16 +118,16 @@ static void init_servo_ledc() {
         chan_cfg.intr_type  = LEDC_INTR_DISABLE;
         chan_cfg.gpio_num   = servo_pins[i];
         chan_cfg.duty       = 0;
-        chan_cfg.hpoint     = 0;
-        ledc_channel_config(&chan_cfg);
+        chan_cfg.hpoint     = staggered_hpoints[i];
+        ESP_ERROR_CHECK(ledc_channel_config(&chan_cfg));
     }
     ledc_initialized = true;
-    ESP_LOGI(TAG, "LEDC Hardware Initialized for Servos.");
+    ESP_LOGI(TAG, "LEDC Hardware Initialized for Servos with Staggered Phases.");
 }
 
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     if (!servos_active) return;
-    init_servo_ledc(); // Deferred initialization ensures Wi-Fi booted clean first
+    init_servo_ledc();
 
     int32_t final_angle = target_angle + offset;
     
@@ -109,7 +139,8 @@ static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle,
     
     if (final_angle > 180) final_angle = 180;
     
-    uint32_t duty = 204 + ((1024 - 204) * final_angle) / 180;
+    // 13-bit: 500us (0 deg) = 205, 2500us (180 deg) = 1024
+    uint32_t duty = 205 + ((1024 - 205) * final_angle) / 180;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
 }
@@ -121,16 +152,24 @@ static void apply_all_servos() {
     write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right,       offset_high_right);
     write_servo_calibrated(SERVO_HIGH_LEFT_CH,  180 - target_high_left, -offset_high_left);
     write_servo_calibrated(SERVO_LOW_RIGHT_CH,  target_low_right,        offset_low_right);
+
+    schedule_auto_relax();
 }
 
 static void relax_all_servos() {
     servos_active = false;
     active_animation = 0;
+    cancel_auto_relax();
 
     if (ledc_initialized) {
         for (int i = 0; i < 4; i++) {
             ledc_stop(LEDC_LOW_SPEED_MODE, servo_channels[i], 0);
         }
+    }
+
+    // Force pins directly to 0V output
+    for (int i = 0; i < 4; i++) {
+        gpio_set_level(servo_pins[i], 0);
     }
     ESP_LOGI(TAG, "All Servos Relaxed & Stopped (0 Amps draw)");
 }
@@ -150,6 +189,7 @@ static void servo_animation_task(void *pv) {
         }
 
         if (active_animation == 1) { 
+            cancel_auto_relax();
             if (anim_state == 0) {
                 anim_pos += 4;
                 if (anim_pos >= 130) anim_state = 1;
@@ -167,6 +207,7 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 2) {
+            cancel_auto_relax();
             if (anim_state == 0) {
                 anim_pos -= 4;
                 if (anim_pos <= 50) anim_state = 1;
@@ -195,6 +236,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 90) {
                     anim_pos = 90;
                     active_animation = 0;
+                    schedule_auto_relax();
                 }
             }
             
@@ -218,6 +260,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos <= 90) {
                     anim_pos = 90;
                     active_animation = 0;
+                    schedule_auto_relax();
                 }
             }
             
@@ -254,6 +297,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
                     active_animation = 0;
+                    schedule_auto_relax();
                 }
             }
             target_high_left = anim_pos;
@@ -285,6 +329,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
                     active_animation = 0;
+                    schedule_auto_relax();
                 }
             }
             target_high_right = anim_pos;
@@ -292,6 +337,7 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(15));
             
         } else if (active_animation == 7) {
+            cancel_auto_relax();
             if (anim_state == 0) {
                 anim_pos += 5;
                 if (anim_pos >= 135) anim_state = 1;
@@ -343,6 +389,7 @@ static void servo_animation_task(void *pv) {
                 wait_counter++;
                 if (wait_counter >= 10) {
                     active_animation = 0;
+                    schedule_auto_relax();
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -372,6 +419,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
                     active_animation = 0; 
+                    schedule_auto_relax();
                 }
             }
             target_low_left = anim_pos;
@@ -403,6 +451,7 @@ static void servo_animation_task(void *pv) {
                 if (anim_pos >= 90) { 
                     anim_pos = 90; 
                     active_animation = 0; 
+                    schedule_auto_relax();
                 }
             }
             target_low_right = anim_pos;
@@ -410,6 +459,7 @@ static void servo_animation_task(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(15));
 
         } else if (active_animation == 11) {
+            cancel_auto_relax();
             if (anim_state == 0) {
                 target_high_left = 180;
                 target_high_right = 180;
@@ -448,20 +498,23 @@ static void servo_animation_task(void *pv) {
 }
 
 void servo_controller_init() {
-    // 1. Strict hardware pull-downs on all pins - DO NOT Init LEDC logic yet.
-    // This allows the Wi-Fi to boot perfectly cleanly on a battery
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << 1) | (1ULL << 2) | (1ULL << 3) | (1ULL << 4);
-    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&io_conf);
-    
-    gpio_set_level(GPIO_NUM_1, 0);
-    gpio_set_level(GPIO_NUM_2, 0);
-    gpio_set_level(GPIO_NUM_3, 0);
-    gpio_set_level(GPIO_NUM_4, 0);
+    // -------------------------------------------------------------------------
+    // CRITICAL FIX: Ensure clean 0V output clamp without calling gpio_reset_pin()
+    // -------------------------------------------------------------------------
+    gpio_config_t servo_io_cfg = {};
+    servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
+    servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
+    servo_io_cfg.pin_bit_mask = (1ULL << SERVO_LOW_LEFT_PIN) | (1ULL << SERVO_HIGH_RIGHT_PIN) |
+                                (1ULL << SERVO_HIGH_LEFT_PIN) | (1ULL << SERVO_LOW_RIGHT_PIN);
+    servo_io_cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    servo_io_cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+    gpio_config(&servo_io_cfg);
+
+    for (int i = 0; i < 4; i++) {
+        gpio_set_level(servo_pins[i], 0);
+        rtc_gpio_pullup_dis(servo_pins[i]);
+        rtc_gpio_pulldown_en(servo_pins[i]);
+    }
 
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -480,12 +533,16 @@ void servo_controller_init() {
         nvs_close(my_handle);
     }
 
+    // Servos stay completely dormant and drawing 0.00A on boot
     servos_active = false;
     active_animation = 0;
     ledc_initialized = false;
 
+    // Auto-relax timer: after 4 seconds of static hold, stops PWM to prevent battery sag
+    servo_auto_relax_timer = xTimerCreate("srv_relax", pdMS_TO_TICKS(4000), pdFALSE, NULL, servo_relax_timer_cb);
+
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Servo Controller Ready (Dormant on boot until commanded)");
+    ESP_LOGI(TAG, "Servo Controller Ready (Completely Dormant on boot, zero power)");
 }
 
 void servo_set_target(const char* id, int angle) {

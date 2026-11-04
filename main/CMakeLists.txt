@@ -15,6 +15,7 @@ else()
 endif()
 
 idf_component_register(SRCS "main.cpp"
+                            "logger.cpp"
                             "wifi_manager.cpp"
                             "sensor_monitor.cpp"
                             "servo_controller.cpp"
@@ -27,4 +28,5 @@ idf_component_register(SRCS "main.cpp"
                             "ble_manager.cpp"
                             "audio_player.cpp"
                     INCLUDE_DIRS "."
+                    PRIV_REQUIRES spiffs
                     EMBED_FILES "${AUDIO_FILE}")

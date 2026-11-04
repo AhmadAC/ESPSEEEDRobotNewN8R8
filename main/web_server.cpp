@@ -7,6 +7,7 @@
 #include "claw_controller.h"
 #include "cam_controller.h"
 #include "audio_player.h"
+#include "logger.h"
 #include "esp_http_server.h"
 #include "esp_camera.h"
 #include "esp_log.h"
@@ -616,6 +617,22 @@ static esp_err_t favicon_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// -------------------------------------------------------------
+// Web Log View & Clear Handlers
+// -------------------------------------------------------------
+static esp_err_t log_view_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
+    return logger_http_stream(req);
+}
+
+static esp_err_t log_clear_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
+    logger_clear();
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Debug log cleared.");
+    return ESP_OK;
+}
+
 void web_server_init() {
     esp_log_level_set("httpd_uri", ESP_LOG_ERROR);
     esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
@@ -625,7 +642,7 @@ void web_server_init() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
         config.uri_match_fn = httpd_uri_match_wildcard;
-        config.max_uri_handlers = 28; 
+        config.max_uri_handlers = 36; 
         config.max_open_sockets = 13;
         config.lru_purge_enable = true;                 
         
@@ -662,6 +679,13 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri);
 
             uri = {}; uri.uri = "/favicon.ico"; uri.method = HTTP_GET; uri.handler = favicon_get_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            // Web Log inspection endpoints
+            uri = {}; uri.uri = "/log"; uri.method = HTTP_GET; uri.handler = log_view_get_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/clear_log"; uri.method = HTTP_GET; uri.handler = log_clear_get_handler;
             httpd_register_uri_handler(server, &uri);
 
             // Universal Claw Endpoints
