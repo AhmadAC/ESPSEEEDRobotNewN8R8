@@ -15,14 +15,14 @@ static const char *TAG = "SENSOR";
 #define ULTRASONIC_TRIG_PIN GPIO_NUM_5 // D4
 #define ULTRASONIC_ECHO_PIN GPIO_NUM_6 // D5
 
-// Default disabled on boot to prevent noisy false triggers on battery startup
+// MUST be false on boot: Sensor stays completely dormant until user enables it
 static bool sensor_enabled = false; 
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
 static int32_t reaction_delay = 0;
 static float current_distance = -1.0f; 
 
-// Dynamic response buffers
+// Dynamic response buffers - default to "none" so no unexpected motions trigger
 static char tripped_action[16] = "none";
 static char cleared_action[16] = "none";
 static char tripped_audio[16] = "none";
@@ -48,6 +48,11 @@ static void load_sensor_nvs() {
         
         nvs_close(my_handle);
     }
+
+    if (strlen(tripped_action) == 0) strcpy(tripped_action, "none");
+    if (strlen(cleared_action) == 0) strcpy(cleared_action, "none");
+    if (strlen(tripped_audio) == 0) strcpy(tripped_audio, "none");
+    if (strlen(cleared_audio) == 0) strcpy(cleared_audio, "none");
 }
 
 static float read_ultrasonic_distance() {
@@ -86,27 +91,31 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int consecutive_detections = 0;
 
     while (1) {
-        if (sensor_enabled) {
-            float dist = read_ultrasonic_distance();
-            current_distance = dist;
-
-            // Two consecutive readings required to avoid electrical noise false-trips
-            if (dist > 0 && dist < distance_threshold) {
-                consecutive_detections++;
-                if (consecutive_detections >= 2) {
-                    safety_lock_engaged = true;
-                    last_detection_time = esp_timer_get_time();
-                }
-            } else {
-                consecutive_detections = 0;
-                if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1000000)) {
-                    safety_lock_engaged = false;
-                }
-            }
-        } else {
+        // HARD DISABLE: If not explicitly enabled by the user, stay 100% idle
+        if (!sensor_enabled) {
             safety_lock_engaged = false;
+            last_lock_state = false;
             current_distance = -1.0f;
             consecutive_detections = 0;
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        float dist = read_ultrasonic_distance();
+        current_distance = dist;
+
+        // Glitch rejection: Require 3 consecutive positive readings to trigger lock
+        if (dist > 0.0f && dist < (float)distance_threshold) {
+            consecutive_detections++;
+            if (consecutive_detections >= 3) {
+                safety_lock_engaged = true;
+                last_detection_time = esp_timer_get_time();
+            }
+        } else {
+            consecutive_detections = 0;
+            if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1500000)) {
+                safety_lock_engaged = false;
+            }
         }
 
         // State Machine State Change Hook
@@ -126,12 +135,13 @@ static void ultrasonic_safety_task(void *pvParameter) {
             last_lock_state = safety_lock_engaged;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
 void sensor_monitor_init() {
     load_sensor_nvs();
+    sensor_enabled = false; // Always force disabled on boot
 
     gpio_reset_pin(ULTRASONIC_TRIG_PIN);
     gpio_set_direction(ULTRASONIC_TRIG_PIN, GPIO_MODE_OUTPUT);
@@ -142,10 +152,19 @@ void sensor_monitor_init() {
     gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_PULLDOWN_ONLY);
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
+    ESP_LOGI(TAG, "Ultrasonic Sensor initialized (DISABLED by default)");
 }
 
 bool sensor_is_enabled() { return sensor_enabled; }
-void sensor_set_enabled(bool enabled) { sensor_enabled = enabled; }
+
+void sensor_set_enabled(bool enabled) { 
+    sensor_enabled = enabled; 
+    if (!enabled) {
+        safety_lock_engaged = false;
+        current_distance = -1.0f;
+    }
+}
+
 int32_t sensor_get_threshold() { return distance_threshold; }
 
 void sensor_set_threshold(int32_t threshold) { 

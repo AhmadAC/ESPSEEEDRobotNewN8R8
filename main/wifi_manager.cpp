@@ -245,8 +245,8 @@ void wifi_manager_init() {
     
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // CRITICAL BATTERY FIX: Set safe TX power (56 = 14 dBm) by default
-    // Prevents power supply collapse from 450mA peak RF spikes when running on battery
+    // BATTERY BROWNOUT PROTECTION: Default TX power = 56 (14 dBm)
+    // Prevents power supply voltage collapse from high RF spikes on battery boot
     int8_t tx_power = 56;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {

@@ -23,6 +23,9 @@ static const char *TAG = "SERVO";
 #define SERVO_HIGH_LEFT_CH   LEDC_CHANNEL_3
 #define SERVO_LOW_RIGHT_CH   LEDC_CHANNEL_4
 
+// PWM State: FALSE until user explicitly sends the first motion command
+static bool servos_active = false;
+
 // State Variables (Logical angles: 0 = Left, 180 = Right)
 static int32_t target_low_left   = 90;
 static int32_t target_high_right = 90;
@@ -52,6 +55,8 @@ static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_bac
 static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
 
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
+    if (!servos_active) return;
+
     int32_t final_angle = target_angle + offset;
     
     if (channel == SERVO_LOW_RIGHT_CH) {
@@ -68,10 +73,23 @@ static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle,
 }
 
 static void apply_all_servos() {
+    if (!servos_active) return;
+
     write_servo_calibrated(SERVO_LOW_LEFT_CH,   180 - target_low_left,  -offset_low_left);
     write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right,       offset_high_right);
     write_servo_calibrated(SERVO_HIGH_LEFT_CH,  180 - target_high_left, -offset_high_left);
     write_servo_calibrated(SERVO_LOW_RIGHT_CH,  target_low_right,        offset_low_right);
+}
+
+static void relax_all_servos() {
+    servos_active = false;
+    active_animation = 0;
+
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_LEFT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_RIGHT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_LEFT_CH, 0);
+    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_RIGHT_CH, 0);
+    ESP_LOGI(TAG, "All Servos Relaxed (0 Amps draw, No jitter)");
 }
 
 static bool current_is_sit() {
@@ -83,6 +101,11 @@ static bool current_is_sit() {
 
 static void servo_animation_task(void *pv) {
     while(1) {
+        if (!servos_active) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
         if (active_animation == 1) { 
             if (anim_state == 0) {
                 anim_pos += 4;
@@ -382,8 +405,7 @@ static void servo_animation_task(void *pv) {
 }
 
 void servo_controller_init() {
-    // 1. CRITICAL: Hardware Pull-Downs on all Servo Signal Pins
-    // Prevents servos from floating, sweeping erratically, or drawing stall currents on boot
+    // 1. HARDWARE PULL-DOWNS on all Servo Signal Pins
     const gpio_num_t servo_pins[] = {
         SERVO_LOW_LEFT_PIN,
         SERVO_HIGH_RIGHT_PIN,
@@ -435,24 +457,16 @@ void servo_controller_init() {
     chan_cfg.gpio_num = SERVO_HIGH_LEFT_PIN;  chan_cfg.channel = SERVO_HIGH_LEFT_CH;  ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_LOW_RIGHT_PIN;  chan_cfg.channel = SERVO_LOW_RIGHT_CH;  ledc_channel_config(&chan_cfg);
 
-    // Actively hold channels LOW on boot so motors stay unpowered and relaxed
-    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_LEFT_CH, 0);
-    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_RIGHT_CH, 0);
-    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_LEFT_CH, 0);
-    ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_RIGHT_CH, 0);
+    // Keep all channels completely stopped on boot
+    relax_all_servos();
 
-    active_animation = 0;
-    target_low_left   = 90;
-    target_high_right = 90;
-    target_high_left  = 90;
-    target_low_right  = 90;
-    
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Hardware PWM Clamped LOW on Boot (No erratic movement or inrush current)");
+    ESP_LOGI(TAG, "Servo Controller initialized (Completely OFF on boot until commanded)");
 }
 
 void servo_set_target(const char* id, int angle) {
     if (sensor_is_safety_locked()) return;
+    servos_active = true;
     active_animation = 0;
     
     if (strcmp(id, "low_left") == 0)   target_low_left = angle;
@@ -469,6 +483,7 @@ void servo_set_target(const char* id, int angle) {
 
 void servo_set_target_silent(const char* id, int angle) {
     if (sensor_is_safety_locked()) return;
+    servos_active = true;
     active_animation = 0;
     
     if (strcmp(id, "low_left") == 0)   target_low_left = angle;
@@ -479,6 +494,7 @@ void servo_set_target_silent(const char* id, int angle) {
 
 void servo_apply_targets() {
     if (sensor_is_safety_locked()) return;
+    servos_active = true;
     apply_all_servos();
 }
 
@@ -488,6 +504,17 @@ void servo_set_action(const char* action_name) {
 }
 
 void servo_set_action_bypass(const char* action_name) {
+    if (strcmp(action_name, "stop") == 0) {
+        relax_all_servos();
+        return;
+    }
+
+    if (strcmp(action_name, "none") == 0) {
+        return;
+    }
+
+    servos_active = true;
+
     if (strcmp(action_name, "forward") == 0) {
         if (active_animation != 1) {
             active_animation = 1;
@@ -555,8 +582,6 @@ void servo_set_action_bypass(const char* action_name) {
         active_animation = 11;
         anim_state = 0;
         wait_counter = 0;
-    } else if (strcmp(action_name, "none") == 0) {
-        // Explicitly ignore 'none' action to prevent resetting pose
     } else {
         active_animation = 0;
         for (int i = 0; i < 5; i++) {
@@ -583,6 +608,7 @@ void servo_get_offsets(int* ll, int* hr, int* hl, int* lr) {
 }
 
 void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, bool save_to_nvs) {
+    servos_active = true;
     if (strcmp(target, "offsets") == 0) {
         offset_low_left = ll; offset_high_right = hr;
         offset_high_left = hl; offset_low_right = lr;
@@ -609,10 +635,10 @@ void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, b
                     nvs_handle_t my_handle;
                     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
                         char key[16];
-                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, ll);
-                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, hr);
-                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, hl);
-                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, lr);
+                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].ll);
+                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hr);
+                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hl);
+                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].lr);
                         nvs_commit(my_handle);
                         nvs_close(my_handle);
                     }
