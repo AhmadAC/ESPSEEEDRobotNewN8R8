@@ -19,9 +19,6 @@
 
 static const char *TAG = "WIFI_MGR";
 
-static bool ap_active = false;
-static int sta_retry_count = 0;
-static const int MAX_STA_RETRIES = 3;
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t udp_task_handle = NULL;
 
@@ -105,30 +102,11 @@ static void udp_broadcast_task(void *pvParameters) {
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        sta_retry_count++;
-        if (sta_retry_count < MAX_STA_RETRIES) {
-            ESP_LOGW(TAG, "STA disconnected. Reconnect attempt %d/%d...", sta_retry_count, MAX_STA_RETRIES);
-            esp_wifi_connect();
-        } else {
-            // Revert immediately to pure SoftAP mode so channel-hopping ceases and AP is 100% visible
-            ESP_LOGW(TAG, "STA failed to connect. Reverting to pure SoftAP mode on Channel 1...");
-            esp_wifi_disconnect();
-            esp_wifi_set_mode(WIFI_MODE_AP);
-            ap_active = true;
-            ble_manager_notify_ip("192.168.4.1");
-            
-            if (dns_task_handle == NULL) {
-                xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
-            }
-        }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        sta_retry_count = 0;
         
         ESP_LOGI(TAG, "===============================================");
-        ESP_LOGI(TAG, "Wi-Fi Connected Successfully!");
-        ESP_LOGI(TAG, "Dashboard: http://" IPSTR "/", IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Wi-Fi Connected! IP: http://" IPSTR "/", IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "===============================================");
         
         char ip_str[32];
@@ -139,7 +117,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         mdns_hostname_set("robotdog");
         mdns_instance_name_set("ESP32 Robot");
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-        mdns_service_add(NULL, "_camera", "_tcp", 81, NULL, 0);
 
         if (udp_task_handle == NULL) {
             xTaskCreate(udp_broadcast_task, "udp_bcast", 2048, NULL, 5, &udp_task_handle);
@@ -157,7 +134,6 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     sta_config.sta.pmf_cfg.required = false;
     
     ESP_LOGI(TAG, "Connecting to SSID: %s", ssid);
-    sta_retry_count = 0;
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
@@ -166,16 +142,14 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
 
 void wifi_manager_init() {
     esp_netif_create_default_wifi_ap();
-    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
 
+    // Configure Rock-Solid Standalone SoftAP on 192.168.4.1
     esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_netif) {
         esp_netif_ip_info_t ip_info;
@@ -187,7 +161,6 @@ void wifi_manager_init() {
         esp_netif_dhcps_start(ap_netif);
     }
 
-    // Rock-Solid SoftAP Configuration (Channel 1, 100ms Beacons)
     wifi_config_t ap_config = {};
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
     strcpy((char*)ap_config.ap.password, "12345678");
@@ -198,55 +171,15 @@ void wifi_manager_init() {
     ap_config.ap.beacon_interval = 100;
     ap_config.ap.ssid_hidden = 0;
 
-    nvs_handle_t my_handle;
-    bool has_creds = false;
-    uint8_t force_ap_u8 = 0;
-    char ssid[33] = {0}; 
-    char pass[65] = {0};
-
-    if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        nvs_get_u8(my_handle, "force_ap", &force_ap_u8);
-        size_t s_len = sizeof(ssid); 
-        size_t p_len = sizeof(pass);
-        
-        if (force_ap_u8 == 0 &&
-            nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
-            nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK &&
-            strlen(ssid) > 0) {
-            has_creds = true;
-        }
-        nvs_close(my_handle);
-    }
-
-    if (!has_creds || force_ap_u8 == 1) {
-        // Pure SoftAP Mode: Radio stays permanently locked on Channel 1 (No channel-hopping)
-        ESP_LOGI(TAG, "Starting in Standalone SoftAP Mode ('ESPRobot_Config')...");
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        ap_active = true;
-    } else {
-        // Dual Mode: SoftAP on Channel 1 + STA connecting in background
-        ESP_LOGI(TAG, "Starting Dual Mode (SoftAP + Connecting to '%s')...", ssid);
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        
-        wifi_config_t sta_config = {};
-        strncpy((char*)sta_config.sta.ssid, ssid, 32);
-        strncpy((char*)sta_config.sta.password, pass, 64);
-        sta_config.sta.listen_interval = 3;
-        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-        sta_config.sta.pmf_cfg.capable = true;
-        sta_config.sta.pmf_cfg.required = false;
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-        ap_active = true;
-    }
-
+    // Direct Pure SoftAP Mode: Radio stays permanently locked on Channel 1 without channel-hopping
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // CRITICAL: Disable Modem-Sleep power saving so beacons broadcast every 100ms without sleeping
+    // Disable modem-sleep so beacons broadcast continuously at 100ms
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    // Strong, reliable 19.5 dBm TX Power (78 * 0.25 dBm) for ceramic chip antenna
+    // Reliable 19.5 dBm transmit power for full coverage on battery
     int8_t tx_power = 78;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
@@ -256,16 +189,11 @@ void wifi_manager_init() {
         nvs_close(pwr_handle);
     }
     esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi started with TX Power %d (WIFI_PS_NONE active)", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi AP Started: SSID 'ESPRobot_Config' (Channel 1, TX %d)", tx_power);
 
     ble_manager_notify_ip("192.168.4.1");
     if (dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
-    }
-
-    if (has_creds && force_ap_u8 == 0) {
-        sta_retry_count = 0;
-        esp_wifi_connect();
     }
 }
 
@@ -325,7 +253,6 @@ void wifi_manager_force_ap_temporary() {
     ESP_LOGI(TAG, "Forcing pure AP Mode ON temporarily.");
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_AP);
-    ap_active = true;
     ble_manager_notify_ip("192.168.4.1");
     
     if (dns_task_handle == NULL) {
