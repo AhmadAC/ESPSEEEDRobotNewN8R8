@@ -28,5 +28,4 @@ idf_component_register(SRCS "main.cpp"
                             "ble_manager.cpp"
                             "audio_player.cpp"
                     INCLUDE_DIRS "."
-                    PRIV_REQUIRES spiffs
                     EMBED_FILES "${AUDIO_FILE}")
