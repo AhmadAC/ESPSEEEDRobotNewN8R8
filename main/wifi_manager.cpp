@@ -142,6 +142,7 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
 
 void wifi_manager_init() {
     esp_netif_create_default_wifi_ap();
+    esp_netif_create_default_wifi_sta(); // Required if we attempt to use saved networks on boot
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -171,25 +172,58 @@ void wifi_manager_init() {
     ap_config.ap.beacon_interval = 100;
     ap_config.ap.ssid_hidden = 0;
 
-    // Direct Pure SoftAP Mode: Radio stays permanently locked on Channel 1 without channel-hopping
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // Reliable 10 dBm transmit power for full coverage on battery, heavily reduces peak current to avoid brownouts
+    int8_t tx_power = 40; 
+    nvs_handle_t pwr_handle;
+    if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
+        if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
+            tx_power = 40; 
+        }
+        nvs_close(pwr_handle);
+    }
+
+    // Check for saved Wi-Fi credentials and force_ap flag
+    char saved_ssid[33] = {0};
+    char saved_pass[65] = {0};
+    uint8_t force_ap = 0;
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+        size_t len = sizeof(saved_ssid);
+        nvs_get_str(my_handle, "wifi_ssid", saved_ssid, &len);
+        len = sizeof(saved_pass);
+        nvs_get_str(my_handle, "wifi_pass", saved_pass, &len);
+        nvs_get_u8(my_handle, "force_ap", &force_ap);
+        nvs_close(my_handle);
+    }
+
+    if (strlen(saved_ssid) > 0 && force_ap == 0) {
+        ESP_LOGI(TAG, "Found saved Wi-Fi credentials. Connecting to %s...", saved_ssid);
+        
+        wifi_config_t sta_config = {};
+        strncpy((char*)sta_config.sta.ssid, saved_ssid, 32);
+        strncpy((char*)sta_config.sta.password, saved_pass, 64);
+        sta_config.sta.listen_interval = 3;
+        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        esp_wifi_set_max_tx_power(tx_power);
+        esp_wifi_connect();
+    } else {
+        ESP_LOGI(TAG, "No saved Wi-Fi or Force AP requested. Starting pure SoftAP.");
+        // Direct Pure SoftAP Mode: Radio stays permanently locked on Channel 1 without channel-hopping
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        esp_wifi_set_max_tx_power(tx_power);
+    }
 
     // Disable modem-sleep so beacons broadcast continuously at 100ms
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    // Reliable 13 dBm transmit power for full coverage on battery, avoids brownouts
-    int8_t tx_power = 52;
-    nvs_handle_t pwr_handle;
-    if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
-        if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
-            tx_power = 52; 
-        }
-        nvs_close(pwr_handle);
-    }
-    esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi AP Started: SSID 'ESPRobot_Config' (Channel 1, TX %d)", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi Started: AP SSID 'ESPRobot_Config' (TX %d)", tx_power);
 
     ble_manager_notify_ip("192.168.4.1");
     if (dns_task_handle == NULL) {

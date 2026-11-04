@@ -450,12 +450,18 @@ static void servo_animation_task(void *pv) {
 void servo_controller_init() {
     // 1. Strict hardware pull-downs on all pins - DO NOT Init LEDC logic yet.
     // This allows the Wi-Fi to boot perfectly cleanly on a battery
-    for (int i = 0; i < 4; i++) {
-        gpio_reset_pin(servo_pins[i]);
-        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
-        gpio_set_level(servo_pins[i], 0);
-        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
-    }
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << 1) | (1ULL << 2) | (1ULL << 3) | (1ULL << 4);
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
+    
+    gpio_set_level(GPIO_NUM_1, 0);
+    gpio_set_level(GPIO_NUM_2, 0);
+    gpio_set_level(GPIO_NUM_3, 0);
+    gpio_set_level(GPIO_NUM_4, 0);
 
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {

@@ -168,18 +168,24 @@ static void console_read_task(void *pvParameter) {
 
 extern "C" void app_main(void) {
     // IMMEDIATELY clamp servo pins to prevent boot-up twitch and massive stall current.
-    // ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up, which servos interpret as 100% duty cycle,
-    // causing them to slam to their physical limits and draw >2A, browning out the Wi-Fi!
-    const gpio_num_t servo_pins[] = {GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_3, GPIO_NUM_4};
-    for (int i = 0; i < 4; i++) {
-        gpio_reset_pin(servo_pins[i]);
-        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
-        gpio_set_level(servo_pins[i], 0);
-        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
-    }
+    // We use a clean gpio_config to force LOW. Using gpio_reset_pin() causes a microsecond glitch 
+    // to the hardware default state (which is a Pull-Up on GPIO 3), drawing >2A and crashing the battery!
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << 1) | (1ULL << 2) | (1ULL << 3) | (1ULL << 4);
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
     
-    // Give the battery time to recover from any initial power-on transients
-    vTaskDelay(pdMS_TO_TICKS(200));
+    gpio_set_level(GPIO_NUM_1, 0);
+    gpio_set_level(GPIO_NUM_2, 0);
+    gpio_set_level(GPIO_NUM_3, 0);
+    gpio_set_level(GPIO_NUM_4, 0);
+    
+    // Give the battery time to recover from any initial power-on transients (like servo capacitor inrush).
+    // 2000ms ensures the 5V rail is rock solid before we turn on the heavy Wi-Fi radio.
+    vTaskDelay(pdMS_TO_TICKS(2000));
 
     // 1. Initialize Non-Volatile Storage (NVS)
     esp_err_t ret = nvs_flash_init();
