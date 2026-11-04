@@ -21,8 +21,6 @@ static const char *TAG = "WIFI_MGR";
 
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t udp_task_handle = NULL;
-static esp_netif_t *s_ap_netif = NULL;
-static esp_netif_t *s_sta_netif = NULL;
 
 static void dns_server_task(void *pvParameters) {
     char rx_buffer[128];
@@ -93,7 +91,8 @@ static void udp_broadcast_task(void *pvParameters) {
     
     while (1) {
         esp_netif_ip_info_t ip_info;
-        if (s_sta_netif && esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
             char msg[64];
             snprintf(msg, sizeof(msg), "ROBOT_DOG_IP:" IPSTR, IP2STR(&ip_info.ip));
             sendto(sock, msg, strlen(msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
@@ -103,11 +102,7 @@ static void udp_broadcast_task(void *pvParameters) {
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Wi-Fi Station disconnected. Access Point remains ACTIVE.");
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        esp_wifi_connect();
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         
         ESP_LOGI(TAG, "===============================================");
@@ -138,7 +133,7 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     sta_config.sta.pmf_cfg.capable = true;
     sta_config.sta.pmf_cfg.required = false;
     
-    ESP_LOGI(TAG, "Connecting to SSID: %s (SoftAP stays always active)", ssid);
+    ESP_LOGI(TAG, "Connecting to SSID: %s", ssid);
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
@@ -146,27 +141,24 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
 }
 
 void wifi_manager_init() {
-    // 1. Instantiate BOTH AP and STA network interfaces
-    s_ap_netif = esp_netif_create_default_wifi_ap();
-    s_sta_netif = esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
 
-    // 2. Configure Standalone SoftAP on 192.168.4.1
-    if (s_ap_netif) {
+    // Configure Rock-Solid Standalone SoftAP on 192.168.4.1
+    esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (ap_netif) {
         esp_netif_ip_info_t ip_info;
         IP4_ADDR(&ip_info.ip, 192, 168, 4, 1);
         IP4_ADDR(&ip_info.gw, 192, 168, 4, 1);
         IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
-        esp_netif_dhcps_stop(s_ap_netif);
-        esp_netif_set_ip_info(s_ap_netif, &ip_info);
-        esp_netif_dhcps_start(s_ap_netif);
+        esp_netif_dhcps_stop(ap_netif);
+        esp_netif_set_ip_info(ap_netif, &ip_info);
+        esp_netif_dhcps_start(ap_netif);
     }
 
     wifi_config_t ap_config = {};
@@ -179,54 +171,25 @@ void wifi_manager_init() {
     ap_config.ap.beacon_interval = 100;
     ap_config.ap.ssid_hidden = 0;
 
-    // 3. Check for saved Station credentials in NVS
-    char saved_ssid[33] = {0};
-    char saved_pass[65] = {0};
-    uint8_t force_ap = 0;
-
-    nvs_handle_t my_handle;
-    if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        size_t s_len = sizeof(saved_ssid);
-        size_t p_len = sizeof(saved_pass);
-        nvs_get_str(my_handle, "wifi_ssid", saved_ssid, &s_len);
-        nvs_get_str(my_handle, "wifi_pass", saved_pass, &p_len);
-        nvs_get_u8(my_handle, "force_ap", &force_ap);
-        nvs_close(my_handle);
-    }
-
-    // ALWAYS-ON RULE: The SoftAP is ALWAYS enabled. If credentials exist and not forced AP, run AP+STA.
-    if (!force_ap && strlen(saved_ssid) > 0) {
-        wifi_config_t sta_config = {};
-        strncpy((char*)sta_config.sta.ssid, saved_ssid, 32);
-        strncpy((char*)sta_config.sta.password, saved_pass, 64);
-        sta_config.sta.listen_interval = 3;
-        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-        ESP_ERROR_CHECK(esp_wifi_start());
-        esp_wifi_connect();
-        ESP_LOGI(TAG, "Wi-Fi started in AP+STA Mode. SoftAP 'ESPRobot_Config' is ALWAYS ON.");
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        ESP_ERROR_CHECK(esp_wifi_start());
-        ESP_LOGI(TAG, "Wi-Fi started in Pure SoftAP Mode. SoftAP 'ESPRobot_Config' is ALWAYS ON.");
-    }
+    // Direct Pure SoftAP Mode: Radio stays permanently locked on Channel 1 without channel-hopping
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
     // Disable modem-sleep so beacons broadcast continuously at 100ms
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    // Reliable 13 dBm (52 in quarter-dBm) power avoids brownouts on battery
+    // Reliable 13 dBm transmit power for full coverage on battery, avoids brownouts
     int8_t tx_power = 52;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
-        nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power);
+        if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
+            tx_power = 52; 
+        }
         nvs_close(pwr_handle);
     }
     esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi AP Online: http://192.168.4.1/ (Channel 1, TX Power %d)", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi AP Started: SSID 'ESPRobot_Config' (Channel 1, TX %d)", tx_power);
 
     ble_manager_notify_ip("192.168.4.1");
     if (dns_task_handle == NULL) {

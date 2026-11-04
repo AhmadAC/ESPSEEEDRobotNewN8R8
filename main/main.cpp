@@ -1,4 +1,4 @@
-// main/main.cpp
+// main\main.cpp
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -167,22 +167,21 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // 1. HARDWARE ZERO-POWER CLAMP: Hold all servo pins at pure GND (0V) with pull-downs enabled.
-    // Crucial: Avoid gpio_reset_pin() because ESP-IDF enables internal pull-ups during reset,
-    // which spikes servo control lines to 3.3V, causing severe twitching and brownouts on battery.
+    // IMMEDIATELY clamp servo pins to prevent boot-up twitch and massive stall current.
+    // ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up, which servos interpret as 100% duty cycle,
+    // causing them to slam to their physical limits and draw >2A, browning out the Wi-Fi!
     const gpio_num_t servo_pins[] = {GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_3, GPIO_NUM_4};
     for (int i = 0; i < 4; i++) {
-        gpio_config_t io_conf = {};
-        io_conf.pin_bit_mask = (1ULL << servo_pins[i]);
-        io_conf.mode = GPIO_MODE_OUTPUT;
-        io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-        io_conf.intr_type = GPIO_INTR_DISABLE;
-        gpio_config(&io_conf);
+        gpio_reset_pin(servo_pins[i]);
+        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
         gpio_set_level(servo_pins[i], 0);
+        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
     }
     
-    // 2. Initialize Non-Volatile Storage (NVS)
+    // Give the battery time to recover from any initial power-on transients
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    // 1. Initialize Non-Volatile Storage (NVS)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -192,11 +191,11 @@ extern "C" void app_main(void) {
     esp_log_level_set("wifi", ESP_LOG_ERROR);    
     esp_log_level_set("cam_hal", ESP_LOG_NONE);  
 
-    // 3. Setup Base Network Event Loop
+    // 2. Setup Base Network Event Loop
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // 4. Detect Saved Device & Boot Mode
+    // 3. Detect Saved Device & Boot Mode
     nvs_handle_t my_handle;
     char dev_mode[16] = "robot";
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -208,13 +207,13 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // 5. PRIORITY INITIALIZATION: Start Wi-Fi & Web Server FIRST.
-    // Starting the network before motors and high-current peripherals ensures clean RF calibration,
-    // prevents battery sags from disrupting the SoftAP, and guarantees the web dashboard is ALWAYS ON.
+    // 4. Boot Modular Components
+    // WE INITIALIZE WI-FI AND WEB SERVER FIRST!
+    // This guarantees that the Wi-Fi AP stands up cleanly without servo current spiking the battery.
+    ESP_LOGI(TAG, "Starting Wi-Fi and Web Server FIRST to ensure connectivity on battery");
     wifi_manager_init();
     web_server_init();
 
-    // 6. Boot Hardware Peripherals in Silent/Dormant State
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
@@ -225,14 +224,14 @@ extern "C" void app_main(void) {
         cam_espnow_init();
     } else {
         ESP_LOGI(TAG, "Booting Device Profile: ROBOT");
-        servo_controller_init();
-        sensor_monitor_init();
-        audio_player_init(); 
         cam_controller_init(); 
+        audio_player_init(); 
+        sensor_monitor_init();
+        servo_controller_init();
     }
 
-    // 7. Start non-blocking USB Serial/JTAG console task
+    // 5. Start non-blocking USB Serial/JTAG console task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "Boot Sequence Complete! Wi-Fi Server is ACTIVE on 192.168.4.1 (Servos Dormant on Battery)");
+    ESP_LOGI(TAG, "Boot Sequence Complete!");
 }
