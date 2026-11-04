@@ -4,9 +4,13 @@ ESP32-S3-Zero (N8R8) Firmware Build Notes
 - Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 13-bit/14-bit 50Hz PWM timers.
 - Servo lines actively clamped LOW on boot with hardware pull-downs to prevent power-on twitches.
 - Audio Subsystem: HT517 I2S Class-D Mono Power Amplifier:
-  * Waveshare Pin 10 (GPIO 10) -> HT517 module pin D10 (BCLK / SCK)
-  * Waveshare Pin 11 (GPIO 11) -> HT517 module pin D11 (LRC / WS)
-  * Waveshare Pin 12 (GPIO 12) -> HT517 module pin D12 (DIN / SD)
-  * Continuous I2S clocking enabled on boot so the HT517 PLL locks and unmutes without cutting off audio buffers.
+  * Dedicated to Controller 1 (I2S_NUM_1) so I2S_NUM_0 remains available for hardware PDM RX microphone.
+  * Default Wiring Preset 1: Waveshare 
+  Pin 10 (GPIO 10 BCLK) -> HT517 D10, 
+  Pin 11 (GPIO 11 LRC) -> HT517 D11, 
+  Pin 12 (GPIO 12 DIN) -> HT517 D12.
+  * Alternative carrier pin presets supported at runtime via Web UI and REPL ('pins 8 7 9' or 'pins 12 11 10') and saved to NVS.
+  * Dynamic clock & slot reconfiguration on playback with silence drain and auto-disable to prevent HT517 DC latchup, pop noises, and idle carrier hiss.
+  * Built-in synthesized 880Hz/1760Hz dual-tone chime ('beep' command / '/beep' web route) for instant hardware line verification independent of WAV assets.
 - Ultrasonic obstacle sensor mapped to GPIO 5 (Trig) and GPIO 6 (Echo).
 - Native USB Serial/JTAG console and Web/BLE provisioning active.

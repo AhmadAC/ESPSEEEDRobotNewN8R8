@@ -82,6 +82,7 @@ static void play_synth_beep(void) {
     i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
 
     i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+    slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
 
     i2s_channel_enable(tx_chan);
@@ -89,6 +90,7 @@ static void play_synth_beep(void) {
 
     float vol = ((float)current_volume / 100.0f) * 0.80f;
     const size_t CHUNK = 256;
+    int16_out_buf:
     int16_t out_buf[CHUNK];
     size_t bytes_written;
 
@@ -288,14 +290,15 @@ static void audio_rx_stream_task(void *pvParameters) {
         i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000);
         i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
 
-        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+        slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
         i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
 
         i2s_channel_enable(tx_chan);
         tx_chan_enabled = true;
 
         uint8_t rx_buffer[512];
-        int16_t stereo_out[512];
+        int16_t mono_out[256];
 
         while (1) {
             int len = recv(sock, rx_buffer, sizeof(rx_buffer), 0);
@@ -307,17 +310,16 @@ static void audio_rx_stream_task(void *pvParameters) {
             size_t mono_samples = len / 2;
             float vol_mult = ((float)current_volume / 100.0f);
 
-            for (size_t i = 0; i < mono_samples; i++) {
+            for (size_t i = 0; i < mono_samples && i < 256; i++) {
                 int32_t val = (int32_t)(pcm[i] * vol_mult);
                 if (val > 32767) val = 32767;
                 if (val < -32768) val = -32768;
-                stereo_out[i * 2]     = (int16_t)val;
-                stereo_out[i * 2 + 1] = (int16_t)val;
+                mono_out[i] = (int16_t)val;
             }
 
             size_t bytes_written;
             if (tx_chan_enabled) {
-                i2s_channel_write(tx_chan, stereo_out, mono_samples * 4, &bytes_written, portMAX_DELAY);
+                i2s_channel_write(tx_chan, mono_out, mono_samples * sizeof(int16_t), &bytes_written, portMAX_DELAY);
             }
         }
 
@@ -382,6 +384,7 @@ static void audio_task(void *pvParameter) {
                         i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
 
                         i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+                        slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
                         i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
 
                         i2s_channel_enable(tx_chan);
@@ -407,7 +410,7 @@ static void audio_task(void *pvParameter) {
                                 if (val < -32768) val = -32768;
                                 out_buf[j] = (int16_t)val;
                             }
-                            i2s_channel_write(tx_chan, out_buf, cur * 2, &bytes_written, portMAX_DELAY);
+                            i2s_channel_write(tx_chan, out_buf, cur * sizeof(int16_t), &bytes_written, portMAX_DELAY);
                         }
                         vTaskDelay(pdMS_TO_TICKS(100));
                     }
@@ -418,7 +421,7 @@ static void audio_task(void *pvParameter) {
             }
 
             // -------------------------------------------------------------
-            // PLAY STATIC WAV FILE THROUGH HT517 AMPLIFIER
+            // PLAY STATIC WAV FILE THROUGH HT517 AMPLIFIER (ALWAYS MONO BUS)
             // -------------------------------------------------------------
             const uint8_t* wav_start = dog_barking_wav_start;
             const uint8_t* wav_end   = dog_barking_wav_end;
@@ -488,49 +491,60 @@ static void audio_task(void *pvParameter) {
                      (long)current_bclk_pin, (long)current_lrc_pin, (long)current_din_pin,
                      (unsigned long)sample_rate, (unsigned int)channels, (unsigned int)bit_depth, (unsigned long)data_size);
 
-            if (tx_chan_enabled) {
-                i2s_channel_disable(tx_chan);
-                tx_chan_enabled = false;
-            }
-
-            i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
-            i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
-
-            i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                I2S_DATA_BIT_WIDTH_16BIT,
-                channels == 2 ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO
-            );
-            i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
-
-            i2s_channel_enable(tx_chan);
-            tx_chan_enabled = true;
-
-            const float HARDWARE_POWER_LIMIT = 0.80f;
-            float vol_mult = ((float)current_volume / 100.0f) * HARDWARE_POWER_LIMIT;
-
-            const size_t CHUNK_SAMPLES = 512;
-            int16_t out_buffer[CHUNK_SAMPLES];
-            size_t bytes_written;
-            size_t num_samples = data_size / 2;
-
-            audio_stop_requested = false;
-            for (size_t i = 0; i < num_samples; i += CHUNK_SAMPLES) {
-                if (audio_stop_requested) break;
-                size_t chunk_size = (num_samples - i < CHUNK_SAMPLES) ? (num_samples - i) : CHUNK_SAMPLES;
-                for (size_t j = 0; j < chunk_size; j++) {
-                    int16_t raw_val = 0;
-                    memcpy(&raw_val, audio_data + (i + j) * 2, 2);
-                    out_buffer[j] = (int16_t)(raw_val * vol_mult);
+            if (audio_data != NULL && data_size > 0 && bit_depth == 16) {
+                if (tx_chan_enabled) {
+                    i2s_channel_disable(tx_chan);
+                    tx_chan_enabled = false;
                 }
-                esp_err_t err = i2s_channel_write(tx_chan, out_buffer, chunk_size * 2, &bytes_written, portMAX_DELAY);
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "I2S Write Failed: %s", esp_err_to_name(err));
-                    break;
-                }
-            }
 
-            vTaskDelay(pdMS_TO_TICKS(100));
-            silence_and_disable_speaker();
+                i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
+                i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
+
+                // KEY FIX: Configure slot strictly as MONO broadcast to BOTH slots
+                // This guarantees the mono HT517 receives data regardless of which slot it samples.
+                i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+                slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+                i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
+
+                i2s_channel_enable(tx_chan);
+                tx_chan_enabled = true;
+
+                const float HARDWARE_POWER_LIMIT = 0.85f;
+                float vol_mult = ((float)current_volume / 100.0f) * HARDWARE_POWER_LIMIT;
+
+                audio_stop_requested = false;
+                const size_t CHUNK_FRAMES = 256;
+                int16_t mono_buffer[CHUNK_FRAMES];
+                size_t bytes_written = 0;
+
+                const int16_t *pcm_in = (const int16_t *)audio_data;
+                size_t total_frames = data_size / (channels * sizeof(int16_t));
+
+                for (size_t f = 0; f < total_frames && !audio_stop_requested; f += CHUNK_FRAMES) {
+                    size_t cur_frames = (total_frames - f < CHUNK_FRAMES) ? (total_frames - f) : CHUNK_FRAMES;
+                    for (size_t j = 0; j < cur_frames; j++) {
+                        int32_t sample = 0;
+                        if (channels == 1) {
+                            sample = pcm_in[f + j];
+                        } else {
+                            // Downmix stereo Left + Right so neither channel is dropped
+                            int32_t left  = pcm_in[(f + j) * 2];
+                            int32_t right = pcm_in[(f + j) * 2 + 1];
+                            sample = (left + right) / 2;
+                        }
+                        int32_t val = (int32_t)(sample * vol_mult);
+                        if (val > 32767) val = 32767;
+                        if (val < -32768) val = -32768;
+                        mono_buffer[j] = (int16_t)val;
+                    }
+                    i2s_channel_write(tx_chan, mono_buffer, cur_frames * sizeof(int16_t), &bytes_written, portMAX_DELAY);
+                }
+
+                vTaskDelay(pdMS_TO_TICKS(100));
+                silence_and_disable_speaker();
+            } else {
+                ESP_LOGE(TAG, "Unsupported WAV bit depth (%u bit)", bit_depth);
+            }
         }
     }
 }
@@ -576,6 +590,7 @@ void audio_set_pins(int bclk, int lrc, int din) {
             },
         },
     };
+    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &std_cfg));
     tx_chan_enabled = false;
 
@@ -610,6 +625,7 @@ void audio_player_init(void) {
             },
         },
     };
+    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
 
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &std_cfg));
     tx_chan_enabled = false;
