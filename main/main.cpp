@@ -11,8 +11,6 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
-#include "driver/uart.h"
-#include "driver/gpio.h"
 
 // Modular Component Headers
 #include "wifi_manager.h"
@@ -31,7 +29,7 @@ static const char *TAG = "MAIN";
 bool is_claw_mode = false; 
 bool is_cam_mode = false; 
 
-// NON-BLOCKING console task: Works seamlessly on battery without USB host connection
+// NON-BLOCKING console task: Will never stall or block on battery when USB is unplugged
 static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_config_t usbjtag_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbjtag_cfg);
@@ -42,7 +40,7 @@ static void console_read_task(void *pvParameter) {
     
     while (1) {
         uint8_t c = 0;
-        int len = usb_serial_jtag_read_bytes(&c, 1, 0); // 0 ticks timeout = strictly non-blocking
+        int len = usb_serial_jtag_read_bytes(&c, 1, 0); // 0 timeout = non-blocking
         
         if (len > 0) {
             if (c == 0x03) { 
@@ -167,21 +165,7 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // IMMEDIATELY clamp servo pins to prevent boot-up twitch and massive stall current.
-    // ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up, which servos interpret as 100% duty cycle,
-    // causing them to slam to their physical limits and draw >2A, browning out the Wi-Fi!
-    const gpio_num_t servo_pins[] = {GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_3, GPIO_NUM_4};
-    for (int i = 0; i < 4; i++) {
-        gpio_reset_pin(servo_pins[i]);
-        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
-        gpio_set_level(servo_pins[i], 0);
-        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
-    }
-    
-    // Give the battery time to recover from any initial power-on transients
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    // 1. Initialize Non-Volatile Storage (NVS)
+    // 1. Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -195,7 +179,7 @@ extern "C" void app_main(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // 3. Detect Saved Device & Boot Mode
+    // 3. Detect Device Profile
     nvs_handle_t my_handle;
     char dev_mode[16] = "robot";
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -207,30 +191,27 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // 4. Boot Modular Components
+    // 4. Initialize Wi-Fi FIRST so SoftAP starts immediately on boot
+    wifi_manager_init();
+    web_server_init();
+
+    // 5. Initialize Hardware Components
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
-        wifi_manager_init();
         cam_controller_init(); 
-        web_server_init();
     } else if (is_cam_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CAM");
-        wifi_manager_init(); 
         cam_controller_init();
         cam_espnow_init();
-        web_server_init();
     } else {
         ESP_LOGI(TAG, "Booting Device Profile: ROBOT");
-        cam_controller_init(); 
-        audio_player_init(); 
-        sensor_monitor_init();
         servo_controller_init();
-        wifi_manager_init();
-        web_server_init();
+        sensor_monitor_init();
+        audio_player_init();
     }
 
-    // 5. Start non-blocking USB Serial/JTAG console task
+    // 6. Start non-blocking USB Serial/JTAG console task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
     ESP_LOGI(TAG, "Boot Sequence Complete!");

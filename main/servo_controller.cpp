@@ -37,10 +37,9 @@ static const ledc_channel_t servo_channels[4] = {
     SERVO_LOW_RIGHT_CH
 };
 
-// State Variables
 static bool servos_active = false;
-static bool pwm_channels_attached = false;
 
+// State Variables (Logical angles: 0 = Left, 180 = Right)
 static int32_t target_low_left   = 90;
 static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
@@ -68,28 +67,8 @@ static Pose poses[5] = {
 static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_back", "stop"};
 static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
 
-static void attach_pwm_channels_if_needed() {
-    if (pwm_channels_attached) return;
-
-    for (int i = 0; i < 4; i++) {
-        ledc_channel_config_t chan_cfg = {};
-        chan_cfg.speed_mode = LEDC_LOW_SPEED_MODE;
-        chan_cfg.channel    = servo_channels[i];
-        chan_cfg.timer_sel  = LEDC_TIMER_0;
-        chan_cfg.intr_type  = LEDC_INTR_DISABLE;
-        chan_cfg.gpio_num   = servo_pins[i];
-        chan_cfg.duty       = 0;
-        chan_cfg.hpoint     = 0;
-        ledc_channel_config(&chan_cfg);
-    }
-    pwm_channels_attached = true;
-    ESP_LOGI(TAG, "PWM Channels attached on demand.");
-}
-
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     if (!servos_active) return;
-
-    attach_pwm_channels_if_needed();
 
     int32_t final_angle = target_angle + offset;
     
@@ -119,21 +98,10 @@ static void relax_all_servos() {
     servos_active = false;
     active_animation = 0;
 
-    // Disconnect PWM and clamp pins to solid 0V to eliminate all motor jitter and power draw
-    if (pwm_channels_attached) {
-        for (int i = 0; i < 4; i++) {
-            ledc_stop(LEDC_LOW_SPEED_MODE, servo_channels[i], 0);
-        }
-    }
-
     for (int i = 0; i < 4; i++) {
-        gpio_reset_pin(servo_pins[i]);
-        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
-        gpio_set_level(servo_pins[i], 0);
-        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
+        ledc_stop(LEDC_LOW_SPEED_MODE, servo_channels[i], 0);
     }
-    pwm_channels_attached = false;
-    ESP_LOGI(TAG, "All Servos Relaxed & Clamped to GND (0 Amps draw)");
+    ESP_LOGI(TAG, "All Servos Relaxed & Stopped (0 Amps draw)");
 }
 
 static bool current_is_sit() {
@@ -449,7 +417,7 @@ static void servo_animation_task(void *pv) {
 }
 
 void servo_controller_init() {
-    // Clamp pins solidly to 0V ground before LEDC or power rails settle
+    // 1. Hardware pull-downs on all pins
     for (int i = 0; i < 4; i++) {
         gpio_reset_pin(servo_pins[i]);
         gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
@@ -482,11 +450,24 @@ void servo_controller_init() {
     ledc_timer.clk_cfg          = LEDC_AUTO_CLK;
     ledc_timer_config(&ledc_timer);
 
-    pwm_channels_attached = false;
-    relax_all_servos();
+    for (int i = 0; i < 4; i++) {
+        ledc_channel_config_t chan_cfg = {};
+        chan_cfg.speed_mode = LEDC_LOW_SPEED_MODE;
+        chan_cfg.channel    = servo_channels[i];
+        chan_cfg.timer_sel  = LEDC_TIMER_0;
+        chan_cfg.intr_type  = LEDC_INTR_DISABLE;
+        chan_cfg.gpio_num   = servo_pins[i];
+        chan_cfg.duty       = 0;
+        chan_cfg.hpoint     = 0;
+        ledc_channel_config(&chan_cfg);
+        ledc_stop(LEDC_LOW_SPEED_MODE, servo_channels[i], 0);
+    }
+
+    servos_active = false;
+    active_animation = 0;
 
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Servo Controller initialized (Zero movement / zero draw on boot)");
+    ESP_LOGI(TAG, "Servo Controller Ready (Dormant on boot until commanded)");
 }
 
 void servo_set_target(const char* id, int angle) {
