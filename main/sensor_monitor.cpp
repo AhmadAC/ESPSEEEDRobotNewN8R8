@@ -15,6 +15,7 @@ static const char *TAG = "SENSOR";
 #define ULTRASONIC_TRIG_PIN GPIO_NUM_5 // D4
 #define ULTRASONIC_ECHO_PIN GPIO_NUM_6 // D5
 
+// Default disabled on boot to prevent noisy false triggers on battery startup
 static bool sensor_enabled = false; 
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
@@ -22,8 +23,8 @@ static int32_t reaction_delay = 0;
 static float current_distance = -1.0f; 
 
 // Dynamic response buffers
-static char tripped_action[16] = "stop";
-static char cleared_action[16] = "stand";
+static char tripped_action[16] = "none";
+static char cleared_action[16] = "none";
 static char tripped_audio[16] = "none";
 static char cleared_audio[16] = "none";
 
@@ -57,14 +58,14 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    int64_t start_timeout = 40000; 
+    int64_t start_timeout = 30000; 
     
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
         if (esp_timer_get_time() - start_time > start_timeout) return -1.0f; 
     }
 
     int64_t echo_start = esp_timer_get_time();
-    int64_t echo_timeout = 40000; 
+    int64_t echo_timeout = 30000; 
     
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
         if (esp_timer_get_time() - echo_start > echo_timeout) return -1.0f; 
@@ -74,7 +75,7 @@ static float read_ultrasonic_distance() {
     int64_t duration = echo_end - echo_start;
     float distance = (float)duration / 58.0f;
     
-    if (distance > 400.0f || distance < 2.0f) return -1.0f;
+    if (distance > 300.0f || distance < 3.0f) return -1.0f;
     
     return distance;
 }
@@ -82,16 +83,22 @@ static float read_ultrasonic_distance() {
 static void ultrasonic_safety_task(void *pvParameter) {
     bool last_lock_state = false;
     int64_t last_detection_time = 0;
+    int consecutive_detections = 0;
 
     while (1) {
         if (sensor_enabled) {
             float dist = read_ultrasonic_distance();
             current_distance = dist;
 
+            // Two consecutive readings required to avoid electrical noise false-trips
             if (dist > 0 && dist < distance_threshold) {
-                safety_lock_engaged = true;
-                last_detection_time = esp_timer_get_time();
+                consecutive_detections++;
+                if (consecutive_detections >= 2) {
+                    safety_lock_engaged = true;
+                    last_detection_time = esp_timer_get_time();
+                }
             } else {
+                consecutive_detections = 0;
                 if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1000000)) {
                     safety_lock_engaged = false;
                 }
@@ -99,6 +106,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
         } else {
             safety_lock_engaged = false;
             current_distance = -1.0f;
+            consecutive_detections = 0;
         }
 
         // State Machine State Change Hook
@@ -109,11 +117,11 @@ static void ultrasonic_safety_task(void *pvParameter) {
             if (safety_lock_engaged) {
                 ESP_LOGW(TAG, "Lock ENGAGED! Running Action: %s | Audio: %s", tripped_action, tripped_audio);
                 if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
-                servo_set_action_bypass(tripped_action);
+                if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
             } else {
                 ESP_LOGI(TAG, "Lock RELEASED. Running Action: %s | Audio: %s", cleared_action, cleared_audio);
                 if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
-                servo_set_action_bypass(cleared_action);
+                if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
             }
             last_lock_state = safety_lock_engaged;
         }
@@ -131,7 +139,7 @@ void sensor_monitor_init() {
 
     gpio_reset_pin(ULTRASONIC_ECHO_PIN);
     gpio_set_direction(ULTRASONIC_ECHO_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_FLOATING);
+    gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_PULLDOWN_ONLY);
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
 }

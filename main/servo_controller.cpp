@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -28,7 +29,7 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStand, 9=BackLeftWave, 10=BackRightWave, 11=LeapForward
+static int active_animation = 0; 
 static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
@@ -381,6 +382,22 @@ static void servo_animation_task(void *pv) {
 }
 
 void servo_controller_init() {
+    // 1. CRITICAL: Hardware Pull-Downs on all Servo Signal Pins
+    // Prevents servos from floating, sweeping erratically, or drawing stall currents on boot
+    const gpio_num_t servo_pins[] = {
+        SERVO_LOW_LEFT_PIN,
+        SERVO_HIGH_RIGHT_PIN,
+        SERVO_HIGH_LEFT_PIN,
+        SERVO_LOW_RIGHT_PIN
+    };
+
+    for (int i = 0; i < 4; i++) {
+        gpio_reset_pin(servo_pins[i]);
+        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
+        gpio_set_level(servo_pins[i], 0);
+        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
+    }
+
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
         nvs_get_i32(my_handle, "ll_off", &offset_low_left);
@@ -410,14 +427,15 @@ void servo_controller_init() {
     chan_cfg.speed_mode = LEDC_LOW_SPEED_MODE;
     chan_cfg.intr_type  = LEDC_INTR_DISABLE;
     chan_cfg.timer_sel  = LEDC_TIMER_0;
-    chan_cfg.duty = 0; chan_cfg.hpoint = 0;
+    chan_cfg.duty = 0; 
+    chan_cfg.hpoint = 0;
 
     chan_cfg.gpio_num = SERVO_LOW_LEFT_PIN;   chan_cfg.channel = SERVO_LOW_LEFT_CH;   ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_HIGH_RIGHT_PIN; chan_cfg.channel = SERVO_HIGH_RIGHT_CH; ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_HIGH_LEFT_PIN;  chan_cfg.channel = SERVO_HIGH_LEFT_CH;  ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_LOW_RIGHT_PIN;  chan_cfg.channel = SERVO_LOW_RIGHT_CH;  ledc_channel_config(&chan_cfg);
 
-    // Stop output pulses immediately on boot to keep all leg servos completely unpowered and relaxed
+    // Actively hold channels LOW on boot so motors stay unpowered and relaxed
     ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_LOW_LEFT_CH, 0);
     ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_RIGHT_CH, 0);
     ledc_stop(LEDC_LOW_SPEED_MODE, SERVO_HIGH_LEFT_CH, 0);
@@ -430,7 +448,7 @@ void servo_controller_init() {
     target_low_right  = 90;
     
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Hardware PWM Initialized for ESP32-S3-Zero (Relaxed on boot, no movement)");
+    ESP_LOGI(TAG, "Hardware PWM Clamped LOW on Boot (No erratic movement or inrush current)");
 }
 
 void servo_set_target(const char* id, int angle) {
@@ -538,6 +556,7 @@ void servo_set_action_bypass(const char* action_name) {
         anim_state = 0;
         wait_counter = 0;
     } else if (strcmp(action_name, "none") == 0) {
+        // Explicitly ignore 'none' action to prevent resetting pose
     } else {
         active_animation = 0;
         for (int i = 0; i < 5; i++) {

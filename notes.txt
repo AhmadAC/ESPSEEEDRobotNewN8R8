@@ -12,5 +12,5 @@ ESP32-S3-Zero (N8R8) Firmware Build Notes
   * Alternative carrier pin presets supported at runtime via Web UI and REPL ('pins 8 7 9' or 'pins 12 11 10') and saved to NVS.
   * Dynamic clock & slot reconfiguration on playback with silence drain and auto-disable to prevent HT517 DC latchup, pop noises, and idle carrier hiss.
   * Built-in synthesized 880Hz/1760Hz dual-tone chime ('beep' command / '/beep' web route) for instant hardware line verification independent of WAV assets.
-- Ultrasonic obstacle sensor mapped to GPIO 5 (Trig) and GPIO 6 (Echo).
+- Ultrasonic obstacle sensor mapped to  GPIO 6 (Echo). GPIO 5 (Trig) 
 - Native USB Serial/JTAG console and Web/BLE provisioning active.

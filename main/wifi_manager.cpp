@@ -164,7 +164,6 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     strncpy((char*)sta_config.sta.password, pass, 64);
     sta_config.sta.listen_interval = 5;
     
-    // CRITICAL: Explicitly support modern WPA2/WPA3 routers and PMF 
     sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     sta_config.sta.pmf_cfg.capable = true;
     sta_config.sta.pmf_cfg.required = false;
@@ -246,17 +245,18 @@ void wifi_manager_init() {
     
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Apply custom Wi-Fi TX Power globally
-    int8_t tx_power = 84;
+    // CRITICAL BATTERY FIX: Set safe TX power (56 = 14 dBm) by default
+    // Prevents power supply collapse from 450mA peak RF spikes when running on battery
+    int8_t tx_power = 56;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
         if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
-            tx_power = 84; // Default if not explicitly set
+            tx_power = 56; 
         }
         nvs_close(pwr_handle);
     }
     esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi TX Power initialized to %d", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi TX Power set to %d (Battery Brownout Protected)", tx_power);
 
     if (has_creds) {
         ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
@@ -266,7 +266,6 @@ void wifi_manager_init() {
         strncpy((char*)sta_config.sta.password, pass, 64);
         
         sta_config.sta.listen_interval = 5; 
-        // CRITICAL: Explicitly support modern WPA2/WPA3 routers and PMF 
         sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
         sta_config.sta.pmf_cfg.capable = true;
         sta_config.sta.pmf_cfg.required = false;
