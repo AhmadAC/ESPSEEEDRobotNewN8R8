@@ -394,11 +394,37 @@ static esp_err_t audio_play_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t play_beep_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
+    audio_play_test_beep();
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "BEEPING");
+    return ESP_OK;
+}
+
 static esp_err_t audio_stop_post_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Connection", "close");
     audio_stop();
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
+}
+
+static esp_err_t set_pins_handler(httpd_req_t *req) {
+    char query[64] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char p_bclk[16] = {0}, p_lrc[16] = {0}, p_din[16] = {0};
+        httpd_query_key_value(query, "bclk", p_bclk, sizeof(p_bclk));
+        httpd_query_key_value(query, "lrc",  p_lrc,  sizeof(p_lrc));
+        httpd_query_key_value(query, "din",  p_din,  sizeof(p_din));
+        if (p_bclk[0] && p_lrc[0] && p_din[0]) {
+            audio_set_pins(atoi(p_bclk), atoi(p_lrc), atoi(p_din));
+            httpd_resp_set_type(req, "text/plain");
+            httpd_resp_send(req, "PINS_UPDATED", HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
+        }
+    }
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing pin params");
+    return ESP_FAIL;
 }
 
 static esp_err_t servo_post_handler(httpd_req_t *req) {
@@ -552,6 +578,12 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     
     cJSON_AddNumberToObject(root, "audio_volume", audio_get_volume());
 
+    int bclk = 10, lrc = 11, din = 12;
+    audio_get_pins(&bclk, &lrc, &din);
+    cJSON_AddNumberToObject(root, "audio_bclk", bclk);
+    cJSON_AddNumberToObject(root, "audio_lrc", lrc);
+    cJSON_AddNumberToObject(root, "audio_din", din);
+
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     
@@ -593,7 +625,7 @@ void web_server_init() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
         config.uri_match_fn = httpd_uri_match_wildcard;
-        config.max_uri_handlers = 25; 
+        config.max_uri_handlers = 28; 
         config.max_open_sockets = 13;
         config.lru_purge_enable = true;                 
         
@@ -657,7 +689,9 @@ void web_server_init() {
                 httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
                 httpd_uri_t uri_audcfg   = { .uri = "/audio_config", .method = HTTP_POST, .handler = audio_config_post_handler, .user_ctx = NULL };
                 httpd_uri_t uri_audply   = { .uri = "/audio_play", .method = HTTP_POST, .handler = audio_play_post_handler, .user_ctx = NULL };
+                httpd_uri_t uri_audbeep  = { .uri = "/beep", .method = HTTP_GET, .handler = play_beep_handler, .user_ctx = NULL };
                 httpd_uri_t uri_audstp   = { .uri = "/audio_stop", .method = HTTP_POST, .handler = audio_stop_post_handler, .user_ctx = NULL };
+                httpd_uri_t uri_audpins  = { .uri = "/set_pins", .method = HTTP_GET, .handler = set_pins_handler, .user_ctx = NULL };
                 httpd_uri_t uri_ccap     = { .uri = "/capture", .method = HTTP_GET, .handler = cam_capture_get_handler, .user_ctx = NULL };
                 httpd_uri_t uri_cflip    = { .uri = "/cam_flip", .method = HTTP_POST, .handler = cam_flip_post_handler, .user_ctx = NULL };
                 
@@ -672,7 +706,9 @@ void web_server_init() {
                 httpd_register_uri_handler(server, &uri_resetcal);
                 httpd_register_uri_handler(server, &uri_audcfg);
                 httpd_register_uri_handler(server, &uri_audply);
+                httpd_register_uri_handler(server, &uri_audbeep);
                 httpd_register_uri_handler(server, &uri_audstp);
+                httpd_register_uri_handler(server, &uri_audpins);
                 httpd_register_uri_handler(server, &uri_ccap);
                 httpd_register_uri_handler(server, &uri_cflip);
             }

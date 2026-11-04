@@ -51,6 +51,8 @@ const char html_part1[] = R"raw_html(<!DOCTYPE html>
         .btn-red { background: #ef4444; }
         .btn-gray { background: #475569; }
         .btn-dark { background: #1e293b; border: 1px solid #334155; }
+        .btn-pin { background: #1e293b; border: 1px solid #475569; padding: 8px 6px; font-size: 0.75rem; color: #cbd5e1; border-radius: 8px; }
+        .btn-pin.active { background: #0284c7; border-color: #38bdf8; color: #fff; font-weight: bold; }
         
         .text-sm { font-size: 0.85rem; color: #94a3b8; margin-top: 0; }
         .status-bar { padding: 12px; border-radius: 10px; font-weight: bold; text-align: center; font-size: 0.85rem; border: 1px solid; text-transform: uppercase; background: #172554; color: #93c5fd; border-color: #3b82f6; margin-bottom: 20px; }
@@ -139,22 +141,27 @@ const char html_cam_card[] = R"raw_html(
 const char html_audio_card[] = R"raw_html(
     <!-- AUDIO CARD -->
     <div class='card'>
-        <h2>Audio & Speaker Output</h2>
+        <h2>Audio & Speaker Output (HT517 I2S)</h2>
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #f43f5e;'>
-                <div class='ctrl-header'><span>Volume Control (Software PCM)</span><span id='val_volume'>50%</span></div>
-                <input type='range' id='volume_slider' min='0' max='100' value='50' onchange='updateVolume(this.value)'>
-                <p class='text-sm' style='margin-bottom:0;'>Controls safe digital amplifier output level.</p>
+                <div class='ctrl-header'><span>Volume Control (Software PCM)</span><span id='val_volume'>80%</span></div>
+                <input type='range' id='volume_slider' min='0' max='100' value='80' onchange='updateVolume(this.value)'>
+                <p class='text-sm' style='margin-bottom:12px;'>Controls safe digital amplifier output level.</p>
+                
+                <label style='font-size:0.8rem;'>Hardware Pin Preset (Tap to Test):</label>
+                <div style='display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 5px;'>
+                    <button id='btnPinYD' class='btn-pin active' onclick='applyPins(10, 11, 12)'>1: 10,11,12</button>
+                    <button id='btnPinSeeed' class='btn-pin' onclick='applyPins(8, 7, 9)'>2: 8,7,9</button>
+                    <button id='btnPinSwap' class='btn-pin' onclick='applyPins(12, 11, 10)'>3: 12,11,10</button>
+                </div>
             </div>
             <div class='ctrl-group' style='border-left-color: #10b981;'>
-                <label>Test Digital Audio Stream:</label>
-                <select id='audio_test_file'>
-                    <option value='dog_bark'>dog-barking.wav</option>
-                </select>
-                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;'>
-                    <button class='btn-teal' onclick='testAudio()'>Play</button>
-                    <button class='btn-red' onclick='stopAudio()'>Stop Sound</button>
+                <label>Test Digital Audio Output:</label>
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;'>
+                    <button class='btn-teal' onclick='testAudio()'>Play Bark</button>
+                    <button class='btn-blue' onclick='playBeep()'>Test Tone</button>
                 </div>
+                <button class='btn-red' style='margin-top: 10px;' onclick='stopAudio()'>Stop Sound</button>
                 <button class='btn-purple' style='margin-top: 10px;' onclick='recordAudio(this)'>Record & Play (3s)</button>
                 
                 <hr style='border-color:#334155; margin: 15px 0;'>
@@ -302,6 +309,7 @@ const char html_audio_tripped[] = R"raw_html(
                 <select id='sensor_tripped_audio' onchange='sendSensorConfig()'>
                     <option value='none'>Mute</option>
                     <option value='dog_bark'>Dog Bark</option>
+                    <option value='test_beep'>Test Tone</option>
                 </select>
 )raw_html";
 
@@ -334,6 +342,7 @@ const char html_audio_cleared[] = R"raw_html(
                 <select id='sensor_cleared_audio' onchange='sendSensorConfig()'>
                     <option value='none'>Mute</option>
                     <option value='dog_bark'>Dog Bark</option>
+                    <option value='test_beep'>Test Tone</option>
                 </select>
 )raw_html";
 
@@ -482,7 +491,7 @@ const char html_part4[] = R"raw_html(
                 htmlContent += `</div><div class="section-title">Joysticks</div><div class="axes-container">`;
 
                 gp.axes.forEach((axisVal, aIndex) => {
-                    if (aIndex === 1 || aIndex === 3) { // Trigger movement on vertical axes Y
+                    if (aIndex === 1 || aIndex === 3) {
                         if (axisVal < -0.5 && lastAxisState[aIndex] !== 'up') {
                             lastAxisState[aIndex] = 'up';
                             if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({action: "forward"}));
@@ -651,8 +660,37 @@ const char html_part4[] = R"raw_html(
     }
 
     function testAudio() {
-        let el = document.getElementById('audio_test_file');
-        if(el) fetchJSON('/audio_play', { sound: el.value });
+        fetchJSON('/audio_play', { sound: 'dog_bark' });
+    }
+    
+    function playBeep() {
+        fetch('/beep');
+    }
+
+    function applyPins(b, l, d) {
+        fetch(`/set_pins?bclk=${b}&lrc=${l}&din=${d}`)
+            .then(r => r.text())
+            .then(t => {
+                updatePinButtons(b, l);
+                setTimeout(playBeep, 150);
+            });
+    }
+
+    function updatePinButtons(bclk, lrc) {
+        let y = document.getElementById("btnPinYD");
+        let s = document.getElementById("btnPinSeeed");
+        let w = document.getElementById("btnPinSwap");
+        if (y) y.classList.remove("active");
+        if (s) s.classList.remove("active");
+        if (w) w.classList.remove("active");
+
+        if (bclk === 8 && s) {
+            s.classList.add("active");
+        } else if (bclk === 12 && w) {
+            w.classList.add("active");
+        } else if (y) {
+            y.classList.add("active");
+        }
     }
     
     function stopAudio() {
@@ -925,6 +963,10 @@ const char html_part4[] = R"raw_html(
                     vSlider.value = data.audio_volume;
                     let valVol = document.getElementById('val_volume');
                     if(valVol) valVol.innerText = data.audio_volume + "%";
+                }
+
+                if (data.audio_bclk !== undefined) {
+                    updatePinButtons(data.audio_bclk, data.audio_lrc);
                 }
 
                 if (document.activeElement !== document.getElementById('threshold')) {

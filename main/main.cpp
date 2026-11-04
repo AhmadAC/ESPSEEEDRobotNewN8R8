@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -44,6 +46,12 @@ static void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "  reset      - Factory Reset NVS (Restores Settings)");
     ESP_LOGI("REPL", "  sound      - Enable Audio UI");
     ESP_LOGI("REPL", "  no sound   - Disable & Hide Audio UI");
+    ESP_LOGI("REPL", "  bark / play - Play dog bark on HT517 speaker");
+    ESP_LOGI("REPL", "  beep / test - Play diagnostic chime tone");
+    ESP_LOGI("REPL", "  stop sound  - Stop audio playback");
+    ESP_LOGI("REPL", "  vol <0-100> - Set audio volume level");
+    ESP_LOGI("REPL", "  pins <bclk> <lrc> <din> - Set I2S audio GPIOs (e.g. 'pins 10 11 12')");
+    ESP_LOGI("REPL", "  status     - Show angles, sensor, volume, and pins");
     ESP_LOGI("REPL", "  connect    - Pair with PyController via ESP-NOW");
     ESP_LOGI("REPL", "  (Claw Mode)  0-180 / open / close / half");
     ESP_LOGI("REPL", "  (Robot Mode) sit, stand, forward, backward, stop...");
@@ -51,7 +59,6 @@ static void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "  (Robot Mode) sync on / sync off - Link pair legs");
     ESP_LOGI("REPL", "  (Robot Mode) all <angle> - Set all legs to angle");
     ESP_LOGI("REPL", "  (Robot Mode) sensor on / sensor off");
-    ESP_LOGI("REPL", "  (Robot Mode) play <sound_name> - e.g. 'play dog_bark' or 'play record_3s'");
     ESP_LOGI("REPL", "  (Ctrl+C)   - Stop Motors / Relax Claw");
     ESP_LOGI("REPL", "  (Ctrl+D)   - Soft Reboot");
     ESP_LOGI("REPL", "==================================================");
@@ -61,7 +68,7 @@ static void console_read_task(void *pvParameter) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     uint8_t buf[64];
-    char cmd[128]; // Increased buffer size to handle longer Wi-Fi passwords
+    char cmd[128];
     int cmd_idx = 0;
     static bool repl_sync = false;
     
@@ -172,6 +179,34 @@ static void console_read_task(void *pvParameter) {
                             }
                             vTaskDelay(pdMS_TO_TICKS(500));
                             esp_restart();
+                        } else if (strcmp(cmd, "beep") == 0 || strcmp(cmd, "test") == 0) {
+                            ESP_LOGI("REPL", "Playing diagnostic chime on HT517 speaker...");
+                            audio_play_test_beep();
+                        } else if (strcmp(cmd, "bark") == 0 || strcmp(cmd, "play") == 0) {
+                            ESP_LOGI("REPL", "Playing dog bark audio...");
+                            audio_play("dog_bark");
+                        } else if (strcmp(cmd, "stop sound") == 0) {
+                            ESP_LOGI("REPL", "Audio stopped.");
+                            audio_stop();
+                        } else if (strncmp(cmd, "vol ", 4) == 0 || strncmp(cmd, "volume ", 7) == 0) {
+                            int req_vol = (strncmp(cmd, "vol ", 4) == 0) ? atoi(cmd + 4) : atoi(cmd + 7);
+                            audio_set_volume(req_vol);
+                            ESP_LOGI("REPL", "Speaker volume set to %d%%", audio_get_volume());
+                        } else if (strncmp(cmd, "pins ", 5) == 0) {
+                            int b = 0, l = 0, d = 0;
+                            if (sscanf(cmd + 5, "%d %d %d", &b, &l, &d) == 3) {
+                                audio_set_pins(b, l, d);
+                                ESP_LOGI("REPL", "Audio pins updated: BCLK=%d, LRC=%d, DIN=%d", b, l, d);
+                            } else {
+                                ESP_LOGE("REPL", "Usage: pins <bclk> <lrc> <din> (e.g. 'pins 10 11 12')");
+                            }
+                        } else if (strcmp(cmd, "status") == 0) {
+                            int bclk = 10, lrc = 11, din = 12;
+                            audio_get_pins(&bclk, &lrc, &din);
+                            int ll, hr, hl, lr;
+                            servo_get_angles(&ll, &hr, &hl, &lr);
+                            ESP_LOGI("REPL", "Status: Servos(LL:%d, HR:%d, HL:%d, LR:%d) | Vol:%d%% | Pins: BCLK=%d, LRC=%d, DIN=%d | Sensor Dist: %.1f cm",
+                                     ll, hr, hl, lr, audio_get_volume(), bclk, lrc, din, sensor_get_distance());
                         } else if (strncmp(cmd, "wifi_power ", 11) == 0) {
                             int pwr = atoi(cmd + 11);
                             if (pwr < 8) pwr = 8;
@@ -182,14 +217,13 @@ static void console_read_task(void *pvParameter) {
                             char ssid[33] = {0};
                             char pass[65] = {0};
                             
-                            // Parse out quotes if the user typed: wifi_set "SSID" "PASSWORD"
                             char *s1 = strchr(cmd + 8, '"');
                             if (s1) {
                                 char *s2 = strchr(s1 + 1, '"');
                                 if (s2) {
-                                    int len = s2 - (s1 + 1);
-                                    if (len > 32) len = 32;
-                                    strncpy(ssid, s1 + 1, len);
+                                    int slen = s2 - (s1 + 1);
+                                    if (slen > 32) slen = 32;
+                                    strncpy(ssid, s1 + 1, slen);
                                     
                                     char *p1 = strchr(s2 + 1, '"');
                                     if (p1) {
@@ -202,7 +236,6 @@ static void console_read_task(void *pvParameter) {
                                     }
                                 }
                             } else {
-                                // Fallback to space separated if the user typed: wifi_set MySsid MyPass
                                 sscanf(cmd + 9, "%32s %64s", ssid, pass);
                             }
 
@@ -210,7 +243,6 @@ static void console_read_task(void *pvParameter) {
                                 ESP_LOGW("REPL", "Saving Wi-Fi -> SSID: '%s', PASS: '%s'", ssid, pass);
                                 wifi_save_credentials(ssid, pass);
                                 
-                                // Automatically switch back to wifi boot mode and clear force_ap
                                 nvs_handle_t h;
                                 if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                                     nvs_set_str(h, "boot_mode", "wifi");
@@ -291,7 +323,7 @@ static void console_read_task(void *pvParameter) {
                         cmd_idx = 0;
                     }
                 } else {
-                    if (cmd_idx < sizeof(cmd) - 1) {
+                    if (cmd_idx < (int)sizeof(cmd) - 1) {
                         cmd[cmd_idx++] = (char)buf[i];
                     }
                 }
