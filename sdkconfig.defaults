@@ -35,3 +35,7 @@ CONFIG_HTTPD_WS_SUPPORT=y
 
 # CRITICAL FIX: Increase LwIP Sockets to handle Captive Portal background spam + UI Polling
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# PREVENT WIFI BROWNOUTS: Store PHY init data in NVS instead of running full calibration on every boot
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=y
+CONFIG_ESP_PHY_INIT_DATA_IN_PARTITION=y

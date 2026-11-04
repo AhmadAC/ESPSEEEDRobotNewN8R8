@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 
 // Modular Component Headers
 #include "wifi_manager.h"
@@ -166,6 +167,20 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
+    // IMMEDIATELY clamp servo pins to prevent boot-up twitch and massive stall current.
+    // ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up, which servos interpret as 100% duty cycle,
+    // causing them to slam to their physical limits and draw >2A, browning out the Wi-Fi!
+    const gpio_num_t servo_pins[] = {GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_3, GPIO_NUM_4};
+    for (int i = 0; i < 4; i++) {
+        gpio_reset_pin(servo_pins[i]);
+        gpio_set_direction(servo_pins[i], GPIO_MODE_OUTPUT);
+        gpio_set_level(servo_pins[i], 0);
+        gpio_set_pull_mode(servo_pins[i], GPIO_PULLDOWN_ONLY);
+    }
+    
+    // Give the battery time to recover from any initial power-on transients
+    vTaskDelay(pdMS_TO_TICKS(200));
+
     // 1. Initialize Non-Volatile Storage (NVS)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {

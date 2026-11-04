@@ -2,7 +2,8 @@ ESP32-S3-Zero (N8R8) Firmware Build Notes
 - Target Hardware: Waveshare ESP32-S3-Zero N8R8 (8MB Flash, 8MB Octal PSRAM) mounted on Seeed robot carrier.
 - Multi-profile support configured: Robot Mode (4-leg kinematics), Claw Mode (MG90S), and Camera Profile.
 - Servos mapped to hardware pins GPIO 1, 2, 3, 4 with 13-bit/14-bit 50Hz PWM timers.
-- Servo lines actively clamped LOW on boot with hardware pull-downs to prevent power-on twitches.
+- SERVO BROWNOUT FIX: ESP32-S3 defaults GPIO 1-4 to Input with Pull-Up. Servos see this as 100% duty cycle on boot and slam to physical limits, drawing >2A stall current and crashing Wi-Fi. Software fix applies immediate 0V clamping on boot. For a perfect hardware fix, solder 10k pull-down resistors between GPIO 1,2,3,4 and GND.
+- Wi-Fi BROWNOUT FIX: Wi-Fi TX Power defaults to 52 (13dBm) instead of 78 (19.5dBm) to prevent peak current from exceeding 5V 2A battery limits during RF calibration.
 - Audio Subsystem: HT517 I2S Class-D Mono Power Amplifier:
   * Dedicated to Controller 1 (I2S_NUM_1) so I2S_NUM_0 remains available for hardware PDM RX microphone.
   * Default Wiring Preset 1: Waveshare 

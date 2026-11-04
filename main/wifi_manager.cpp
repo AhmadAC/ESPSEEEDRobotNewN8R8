@@ -179,12 +179,12 @@ void wifi_manager_init() {
     // Disable modem-sleep so beacons broadcast continuously at 100ms
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    // Reliable 19.5 dBm transmit power for full coverage on battery
-    int8_t tx_power = 78;
+    // Reliable 13 dBm transmit power for full coverage on battery, avoids brownouts
+    int8_t tx_power = 52;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
         if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
-            tx_power = 78; 
+            tx_power = 52; 
         }
         nvs_close(pwr_handle);
     }
