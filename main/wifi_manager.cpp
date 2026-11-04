@@ -19,8 +19,9 @@
 
 static const char *TAG = "WIFI_MGR";
 
-static int64_t disconnect_time = 0;
-static bool ap_fallback_active = false;
+static bool ap_active = false;
+static int sta_retry_count = 0;
+static const int MAX_STA_RETRIES = 3;
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t udp_task_handle = NULL;
 
@@ -46,7 +47,7 @@ static void dns_server_task(void *pvParameters) {
         return;
     }
     
-    ESP_LOGI("DNS", "DNS Server listening on port 53 (Captive Portal active)");
+    ESP_LOGI("DNS", "DNS Captive Portal active on port 53");
 
     while (1) {
         struct sockaddr_storage source_addr;
@@ -105,43 +106,31 @@ static void udp_broadcast_task(void *pvParameters) {
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        
-        if (disconnect_time == 0) {
-            disconnect_time = esp_timer_get_time();
-        }
-        
-        int64_t elapsed_sec = (esp_timer_get_time() - disconnect_time) / 1000000;
-        
-        if (elapsed_sec >= 300) {
-            if (!ap_fallback_active) {
-                ESP_LOGW(TAG, "Wi-Fi disconnected for 300s. Enabling AP fallback...");
-                esp_wifi_set_mode(WIFI_MODE_APSTA);
-                ap_fallback_active = true;
-                ble_manager_notify_ip("192.168.4.1");
-                
-                if (dns_task_handle == NULL) {
-                    xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
-                }
-            }
-            ESP_LOGW(TAG, "Disconnected from Wi-Fi. AP Active. Retrying STA in 3s...");
+        sta_retry_count++;
+        if (sta_retry_count < MAX_STA_RETRIES) {
+            ESP_LOGW(TAG, "STA disconnected. Reconnect attempt %d/%d...", sta_retry_count, MAX_STA_RETRIES);
+            esp_wifi_connect();
         } else {
-            ESP_LOGW(TAG, "Disconnected from Wi-Fi. Retrying STA in 3s... (AP fallback in %d s)", (int)(300 - elapsed_sec));
+            // Revert immediately to pure SoftAP mode so channel-hopping ceases and AP is 100% visible
+            ESP_LOGW(TAG, "STA failed to connect. Reverting to pure SoftAP mode on Channel 1...");
+            esp_wifi_disconnect();
+            esp_wifi_set_mode(WIFI_MODE_AP);
+            ap_active = true;
+            ble_manager_notify_ip("192.168.4.1");
+            
+            if (dns_task_handle == NULL) {
+                xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
+            }
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(3000)); 
-        esp_wifi_connect();
-        
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        sta_retry_count = 0;
         
         ESP_LOGI(TAG, "===============================================");
         ESP_LOGI(TAG, "Wi-Fi Connected Successfully!");
-        ESP_LOGI(TAG, "Dashboard available at: http://" IPSTR "/", IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Dashboard: http://" IPSTR "/", IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "===============================================");
         
-        disconnect_time = 0;
-        ap_fallback_active = false;
-
         char ip_str[32];
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
         ble_manager_notify_ip(ip_str);
@@ -162,13 +151,13 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
     wifi_config_t sta_config = {};
     strncpy((char*)sta_config.sta.ssid, ssid, 32);
     strncpy((char*)sta_config.sta.password, pass, 64);
-    sta_config.sta.listen_interval = 5;
-    
+    sta_config.sta.listen_interval = 3;
     sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     sta_config.sta.pmf_cfg.capable = true;
     sta_config.sta.pmf_cfg.required = false;
     
-    ESP_LOGI(TAG, "Asynchronous connection triggered via BLE for SSID: %s", ssid);
+    ESP_LOGI(TAG, "Connecting to SSID: %s", ssid);
+    sta_retry_count = 0;
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
@@ -176,8 +165,8 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
 }
 
 void wifi_manager_init() {
-    esp_netif_create_default_wifi_sta();
     esp_netif_create_default_wifi_ap();
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -198,17 +187,17 @@ void wifi_manager_init() {
         esp_netif_dhcps_start(ap_netif);
     }
 
+    // Rock-Solid SoftAP Configuration (Channel 1, 100ms Beacons)
     wifi_config_t ap_config = {};
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
     strcpy((char*)ap_config.ap.password, "12345678");
     ap_config.ap.ssid_len = strlen("ESPRobot_Config");
     ap_config.ap.channel = 1;
     ap_config.ap.max_connection = 4;
-    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK; 
+    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ap_config.ap.beacon_interval = 100;
+    ap_config.ap.ssid_hidden = 0;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    
     nvs_handle_t my_handle;
     bool has_creds = false;
     uint8_t force_ap_u8 = 0;
@@ -222,60 +211,61 @@ void wifi_manager_init() {
         
         if (force_ap_u8 == 0 &&
             nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
-            nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK) {
+            nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK &&
+            strlen(ssid) > 0) {
             has_creds = true;
         }
         nvs_close(my_handle);
     }
 
-    if (has_creds) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-        ap_fallback_active = false;
+    if (!has_creds || force_ap_u8 == 1) {
+        // Pure SoftAP Mode: Radio stays permanently locked on Channel 1 (No channel-hopping)
+        ESP_LOGI(TAG, "Starting in Standalone SoftAP Mode ('ESPRobot_Config')...");
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ap_active = true;
     } else {
-        if (force_ap_u8 == 1) ESP_LOGI(TAG, "AP Mode forced by User Preference.");
-        else ESP_LOGI(TAG, "No Valid Credentials Found. Launching AP Config Mode...");
+        // Dual Mode: SoftAP on Channel 1 + STA connecting in background
+        ESP_LOGI(TAG, "Starting Dual Mode (SoftAP + Connecting to '%s')...", ssid);
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
         
-        ap_fallback_active = true;
-        ble_manager_notify_ip("192.168.4.1");
-        
-        if (dns_task_handle == NULL) {
-            xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
-        }
+        wifi_config_t sta_config = {};
+        strncpy((char*)sta_config.sta.ssid, ssid, 32);
+        strncpy((char*)sta_config.sta.password, pass, 64);
+        sta_config.sta.listen_interval = 3;
+        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        sta_config.sta.pmf_cfg.capable = true;
+        sta_config.sta.pmf_cfg.required = false;
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+        ap_active = true;
     }
-    
+
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // BATTERY BROWNOUT PROTECTION: Default TX power = 56 (14 dBm)
-    // Prevents power supply voltage collapse from high RF spikes on battery boot
-    int8_t tx_power = 56;
+    // CRITICAL: Disable Modem-Sleep power saving so beacons broadcast every 100ms without sleeping
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
+    // Strong, reliable 19.5 dBm TX Power (78 * 0.25 dBm) for ceramic chip antenna
+    int8_t tx_power = 78;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
         if (nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power) != ESP_OK) {
-            tx_power = 56; 
+            tx_power = 78; 
         }
         nvs_close(pwr_handle);
     }
     esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi TX Power set to %d (Battery Brownout Protected)", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi started with TX Power %d (WIFI_PS_NONE active)", tx_power);
 
-    if (has_creds) {
-        ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
-        wifi_config_t sta_config = {};
-        
-        strncpy((char*)sta_config.sta.ssid, ssid, 32);
-        strncpy((char*)sta_config.sta.password, pass, 64);
-        
-        sta_config.sta.listen_interval = 5; 
-        sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-        sta_config.sta.pmf_cfg.capable = true;
-        sta_config.sta.pmf_cfg.required = false;
+    ble_manager_notify_ip("192.168.4.1");
+    if (dns_task_handle == NULL) {
+        xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
+    }
 
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-        
-        disconnect_time = esp_timer_get_time(); 
+    if (has_creds && force_ap_u8 == 0) {
+        sta_retry_count = 0;
         esp_wifi_connect();
-    } else {
-        ESP_LOGW(TAG, "No Wi-Fi credentials found. AP Mode only.");
     }
 }
 
@@ -293,9 +283,7 @@ char* wifi_scan_networks_json() {
         esp_wifi_scan_get_ap_num(&ap_count);
         
         if (ap_count > 0) {
-            if (ap_count > 30) {
-                ap_count = 30;
-            }
+            if (ap_count > 30) ap_count = 30;
             wifi_ap_record_t *ap_info = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * ap_count);
             if (ap_info != NULL) {
                 if (esp_wifi_scan_get_ap_records(&ap_count, ap_info) == ESP_OK) {
@@ -334,9 +322,10 @@ void wifi_save_credentials(const char* ssid, const char* pass) {
 }
 
 void wifi_manager_force_ap_temporary() {
-    ESP_LOGI(TAG, "BLE Connection detected! Forcing AP Mode ON temporarily so Web Server is accessible.");
-    esp_wifi_set_mode(WIFI_MODE_APSTA);
-    ap_fallback_active = true;
+    ESP_LOGI(TAG, "Forcing pure AP Mode ON temporarily.");
+    esp_wifi_disconnect();
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    ap_active = true;
     ble_manager_notify_ip("192.168.4.1");
     
     if (dns_task_handle == NULL) {
@@ -352,5 +341,5 @@ void wifi_set_tx_power(int8_t power) {
         nvs_close(my_handle);
     }
     esp_wifi_set_max_tx_power(power);
-    ESP_LOGI(TAG, "Wi-Fi TX Power dynamically set to %d. Saved to NVS.", power);
+    ESP_LOGI(TAG, "Wi-Fi TX Power set to %d", power);
 }
