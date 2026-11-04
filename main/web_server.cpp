@@ -630,92 +630,118 @@ void web_server_init() {
         config.lru_purge_enable = true;                 
         
         if (httpd_start(&server, &config) == ESP_OK) {
-            
-            httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            
-            httpd_register_uri_handler(server, &uri_cp1);
-            httpd_register_uri_handler(server, &uri_cp2);
-            httpd_register_uri_handler(server, &uri_cp3);
+            httpd_uri_t uri = {};
+
+            // Captive portal probes
+            uri = {}; uri.uri = "/generate_204"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/hotspot-detect.html"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/ncsi.txt"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
+            httpd_register_uri_handler(server, &uri);
 
             // Universal Endpoints
-            httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_scan     = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_save     = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_switchap = { .uri = "/switch_to_ap", .method = HTTP_POST, .handler = switch_ap_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_switchwi = { .uri = "/switch_to_wifi", .method = HTTP_POST, .handler = switch_wifi_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_swmode   = { .uri = "/switch_mode", .method = HTTP_POST, .handler = switch_mode_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
-            
-            // Universal Claw Endpoints (Available to App on HTTP)
-            httpd_uri_t uri_claw     = { .uri = "/claw",   .method = HTTP_GET, .handler = claw_get_handler,   .user_ctx = NULL };
-            httpd_uri_t uri_status   = { .uri = "/status", .method = HTTP_GET, .handler = claw_status_get_handler, .user_ctx = NULL };
+            uri = {}; uri.uri = "/"; uri.method = HTTP_GET; uri.handler = index_get_handler;
+            httpd_register_uri_handler(server, &uri);
 
-            httpd_register_uri_handler(server, &uri_index);
-            httpd_register_uri_handler(server, &uri_scan);
-            httpd_register_uri_handler(server, &uri_save);
-            httpd_register_uri_handler(server, &uri_switchap);
-            httpd_register_uri_handler(server, &uri_switchwi);
-            httpd_register_uri_handler(server, &uri_swmode);
-            httpd_register_uri_handler(server, &uri_favicon);
-            httpd_register_uri_handler(server, &uri_claw);
-            httpd_register_uri_handler(server, &uri_status);
+            uri = {}; uri.uri = "/scan"; uri.method = HTTP_GET; uri.handler = scan_get_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/save"; uri.method = HTTP_POST; uri.handler = save_post_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/switch_to_ap"; uri.method = HTTP_POST; uri.handler = switch_ap_post_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/switch_to_wifi"; uri.method = HTTP_POST; uri.handler = switch_wifi_post_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/switch_mode"; uri.method = HTTP_POST; uri.handler = switch_mode_post_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/favicon.ico"; uri.method = HTTP_GET; uri.handler = favicon_get_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            // Universal Claw Endpoints
+            uri = {}; uri.uri = "/claw"; uri.method = HTTP_GET; uri.handler = claw_get_handler;
+            httpd_register_uri_handler(server, &uri);
+
+            uri = {}; uri.uri = "/status"; uri.method = HTTP_GET; uri.handler = claw_status_get_handler;
+            httpd_register_uri_handler(server, &uri);
 
             if (is_claw_mode) {
-                httpd_uri_t uri_ccap   = { .uri = "/capture",.method = HTTP_GET, .handler = cam_capture_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_pair   = { .uri = "/espnow_pair",.method = HTTP_POST, .handler = espnow_pair_post_handler, .user_ctx = NULL };
-                
-                httpd_register_uri_handler(server, &uri_ccap);
-                httpd_register_uri_handler(server, &uri_pair);
+                uri = {}; uri.uri = "/capture"; uri.method = HTTP_GET; uri.handler = cam_capture_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/espnow_pair"; uri.method = HTTP_POST; uri.handler = espnow_pair_post_handler;
+                httpd_register_uri_handler(server, &uri);
             } else if (is_cam_mode) {
-                httpd_uri_t uri_cset   = { .uri = "/setup",  .method = HTTP_GET, .handler = cam_setup_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_capp   = { .uri = "/app",    .method = HTTP_GET, .handler = cam_app_get_handler,   .user_ctx = NULL };
-                httpd_uri_t uri_ccap   = { .uri = "/capture",.method = HTTP_GET, .handler = cam_capture_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
-                httpd_register_uri_handler(server, &uri_cset);
-                httpd_register_uri_handler(server, &uri_capp);
-                httpd_register_uri_handler(server, &uri_ccap);
-                httpd_register_uri_handler(server, &uri_resetcal);
+                uri = {}; uri.uri = "/setup"; uri.method = HTTP_GET; uri.handler = cam_setup_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/app"; uri.method = HTTP_GET; uri.handler = cam_app_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/capture"; uri.method = HTTP_GET; uri.handler = cam_capture_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/reset_cal"; uri.method = HTTP_POST; uri.handler = reset_cal_post_handler;
+                httpd_register_uri_handler(server, &uri);
             } else {
-                httpd_uri_t uri_ws       = { .uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .user_ctx = NULL, .is_websocket = true };
-                httpd_uri_t uri_servo    = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_act      = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_cal      = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_caljson  = { .uri = "/calibrations_json", .method = HTTP_GET, .handler = calibrations_json_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_dlcal    = { .uri = "/download_cal", .method = HTTP_GET, .handler = download_cal_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_angs     = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_sensor   = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_audcfg   = { .uri = "/audio_config", .method = HTTP_POST, .handler = audio_config_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_audply   = { .uri = "/audio_play", .method = HTTP_POST, .handler = audio_play_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_audbeep  = { .uri = "/beep", .method = HTTP_GET, .handler = play_beep_handler, .user_ctx = NULL };
-                httpd_uri_t uri_audstp   = { .uri = "/audio_stop", .method = HTTP_POST, .handler = audio_stop_post_handler, .user_ctx = NULL };
-                httpd_uri_t uri_audpins  = { .uri = "/set_pins", .method = HTTP_GET, .handler = set_pins_handler, .user_ctx = NULL };
-                httpd_uri_t uri_ccap     = { .uri = "/capture", .method = HTTP_GET, .handler = cam_capture_get_handler, .user_ctx = NULL };
-                httpd_uri_t uri_cflip    = { .uri = "/cam_flip", .method = HTTP_POST, .handler = cam_flip_post_handler, .user_ctx = NULL };
-                
-                httpd_register_uri_handler(server, &uri_ws);
-                httpd_register_uri_handler(server, &uri_servo);
-                httpd_register_uri_handler(server, &uri_act);
-                httpd_register_uri_handler(server, &uri_cal);
-                httpd_register_uri_handler(server, &uri_caljson);
-                httpd_register_uri_handler(server, &uri_dlcal);
-                httpd_register_uri_handler(server, &uri_angs);
-                httpd_register_uri_handler(server, &uri_sensor);
-                httpd_register_uri_handler(server, &uri_resetcal);
-                httpd_register_uri_handler(server, &uri_audcfg);
-                httpd_register_uri_handler(server, &uri_audply);
-                httpd_register_uri_handler(server, &uri_audbeep);
-                httpd_register_uri_handler(server, &uri_audstp);
-                httpd_register_uri_handler(server, &uri_audpins);
-                httpd_register_uri_handler(server, &uri_ccap);
-                httpd_register_uri_handler(server, &uri_cflip);
+                uri = {}; uri.uri = "/ws"; uri.method = HTTP_GET; uri.handler = ws_handler; uri.is_websocket = true;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/servo"; uri.method = HTTP_POST; uri.handler = servo_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/action"; uri.method = HTTP_POST; uri.handler = action_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/calibrate"; uri.method = HTTP_POST; uri.handler = calibrate_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/calibrations_json"; uri.method = HTTP_GET; uri.handler = calibrations_json_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/download_cal"; uri.method = HTTP_GET; uri.handler = download_cal_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/angles"; uri.method = HTTP_GET; uri.handler = angles_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/sensor"; uri.method = HTTP_POST; uri.handler = sensor_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/reset_cal"; uri.method = HTTP_POST; uri.handler = reset_cal_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/audio_config"; uri.method = HTTP_POST; uri.handler = audio_config_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/audio_play"; uri.method = HTTP_POST; uri.handler = audio_play_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/beep"; uri.method = HTTP_GET; uri.handler = play_beep_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/audio_stop"; uri.method = HTTP_POST; uri.handler = audio_stop_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/set_pins"; uri.method = HTTP_GET; uri.handler = set_pins_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/capture"; uri.method = HTTP_GET; uri.handler = cam_capture_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/cam_flip"; uri.method = HTTP_POST; uri.handler = cam_flip_post_handler;
+                httpd_register_uri_handler(server, &uri);
             }
             
             // Fallback route MUST be registered last
-            httpd_uri_t uri_fallback = { .uri = "/*", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            httpd_register_uri_handler(server, &uri_fallback);
+            uri = {}; uri.uri = "/*"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
+            httpd_register_uri_handler(server, &uri);
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }

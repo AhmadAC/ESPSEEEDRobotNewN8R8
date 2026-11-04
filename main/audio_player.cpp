@@ -90,7 +90,6 @@ static void play_synth_beep(void) {
 
     float vol = ((float)current_volume / 100.0f) * 0.80f;
     const size_t CHUNK = 256;
-    int16_out_buf:
     int16_t out_buf[CHUNK];
     size_t bytes_written;
 
