@@ -11,6 +11,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
+#include "esp_vfs_usb_serial_jtag.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
@@ -37,6 +38,11 @@ bool is_cam_mode = false;
 static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_config_t usbjtag_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbjtag_cfg);
+
+    // CRITICAL FIX: Ensure the console VFS remains non-blocking even after driver install.
+    // This prevents the ESP32-S3 from deadlocking on battery power when the USB TX FIFO 
+    // fills up because no host is connected to read it.
+    esp_vfs_usb_serial_jtag_use_nonblocking();
 
     char cmd[128];
     int cmd_idx = 0;
