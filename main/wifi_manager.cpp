@@ -143,10 +143,6 @@ void wifi_manager_connect_async(const char* ssid, const char* pass) {
 }
 
 void wifi_manager_init() {
-    // -------------------------------------------------------------------------
-    // CRITICAL FIX: Create BOTH AP and STA network interfaces so STA works
-    // and SoftAP stays permanently accessible on battery.
-    // -------------------------------------------------------------------------
     esp_netif_create_default_wifi_ap();
     esp_netif_create_default_wifi_sta();
 
@@ -175,7 +171,7 @@ void wifi_manager_init() {
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
     strcpy((char*)ap_config.ap.password, "12345678");
     ap_config.ap.ssid_len = strlen("ESPRobot_Config");
-    ap_config.ap.channel = 1;
+    ap_config.ap.channel = 6; // Move to Ch 6 to avoid interference
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ap_config.ap.beacon_interval = 100;
@@ -222,6 +218,10 @@ void wifi_manager_init() {
         esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
 
         ESP_ERROR_CHECK(esp_wifi_start());
+        
+        // CRITICAL FIX: Disable Modem Sleep. Guarantees AP beacons never drop on battery.
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        
         esp_wifi_connect();
     } else {
         ESP_LOGI(TAG, "Starting pure SoftAP Mode (SSID 'ESPRobot_Config' on 192.168.4.1)");
@@ -232,19 +232,22 @@ void wifi_manager_init() {
         esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
         
         ESP_ERROR_CHECK(esp_wifi_start());
+        
+        // CRITICAL FIX: Disable Modem Sleep. Guarantees AP beacons never drop on battery.
+        esp_wifi_set_ps(WIFI_PS_NONE);
     }
 
-    // Set stable TX power: 48 = 12 dBm (avoids power-bank/battery surge droop)
-    int8_t tx_power = 48;
+    // Set stable TX power: 68 = 17 dBm (Stronger signal for battery without USB ground plane)
+    int8_t tx_power = 68;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
         nvs_get_i8(pwr_handle, "wifi_tx_pwr", &tx_power);
         nvs_close(pwr_handle);
     }
     if (tx_power < 40) tx_power = 40;
-    if (tx_power > 56) tx_power = 52;
+    if (tx_power > 78) tx_power = 78;
     esp_wifi_set_max_tx_power(tx_power);
-    ESP_LOGI(TAG, "Wi-Fi Running: SSID 'ESPRobot_Config' (Channel 1, TX %d)", tx_power);
+    ESP_LOGI(TAG, "Wi-Fi Running: SSID 'ESPRobot_Config' (Channel 6, TX %d)", tx_power);
 
     ble_manager_notify_ip("192.168.4.1");
     if (dns_task_handle == NULL) {
