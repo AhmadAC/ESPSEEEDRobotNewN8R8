@@ -11,7 +11,18 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
+
+// Bulletproof VFS inclusion across ESP-IDF v4.x, v5.0, v5.2, and v5.3+
+#if __has_include("esp_vfs_dev.h")
+#include "esp_vfs_dev.h"
+#endif
+#if __has_include("esp_vfs_usb_serial_jtag.h")
 #include "esp_vfs_usb_serial_jtag.h"
+#endif
+#if __has_include("driver/usb_serial_jtag_vfs.h")
+#include "driver/usb_serial_jtag_vfs.h"
+#endif
+
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
@@ -42,7 +53,11 @@ static void console_read_task(void *pvParameter) {
     // CRITICAL FIX: Ensure the console VFS remains non-blocking even after driver install.
     // This prevents the ESP32-S3 from deadlocking on battery power when the USB TX FIFO 
     // fills up because no host is connected to read it.
+#if __has_include("driver/usb_serial_jtag_vfs.h")
     usb_serial_jtag_vfs_use_nonblocking();
+#else
+    esp_vfs_usb_serial_jtag_use_nonblocking();
+#endif
 
     char cmd[128];
     int cmd_idx = 0;
