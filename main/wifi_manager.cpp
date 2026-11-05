@@ -1,4 +1,4 @@
-// main/wifi_manager.cpp
+// main\wifi_manager.cpp
 #include "wifi_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -180,6 +180,10 @@ void wifi_manager_init() {
     ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ap_config.ap.beacon_interval = 100;
     ap_config.ap.ssid_hidden = 0;
+    
+    // Disable PMF to guarantee visibility on older Apple/Android devices
+    ap_config.ap.pmf_cfg.capable = false;
+    ap_config.ap.pmf_cfg.required = false;
 
     // Check for saved station credentials
     char saved_ssid[33] = {0};
@@ -214,12 +218,19 @@ void wifi_manager_init() {
         sta_config.sta.pmf_cfg.required = false;
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
 
+        // Force 20MHz bandwidth for maximum phone compatibility
+        esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+
         ESP_ERROR_CHECK(esp_wifi_start());
         esp_wifi_connect();
     } else {
         ESP_LOGI(TAG, "Starting pure SoftAP Mode (SSID 'ESPRobot_Config' on 192.168.4.1)");
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        
+        // Force 20MHz bandwidth for maximum phone compatibility
+        esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+        
         ESP_ERROR_CHECK(esp_wifi_start());
     }
 
