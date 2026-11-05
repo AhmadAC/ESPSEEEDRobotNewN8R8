@@ -51,8 +51,6 @@ static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_install(&usbjtag_cfg);
 
     // CRITICAL FIX: Ensure the console VFS remains non-blocking even after driver install.
-    // This prevents the ESP32-S3 from deadlocking on battery power when the USB TX FIFO 
-    // fills up because no host is connected to read it.
 #if __has_include("driver/usb_serial_jtag_vfs.h")
     usb_serial_jtag_vfs_use_nonblocking();
 #else
@@ -64,6 +62,13 @@ static void console_read_task(void *pvParameter) {
     static bool repl_sync = false;
     
     while (1) {
+        // If not connected to a USB PC host (running on battery power), sleep and do not poll
+        if (!usb_serial_jtag_is_connected()) {
+            cmd_idx = 0;
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
         uint8_t c = 0;
         int len = usb_serial_jtag_read_bytes(&c, 1, 0); // 0 ticks timeout = strictly non-blocking
         
@@ -71,9 +76,6 @@ static void console_read_task(void *pvParameter) {
             if (c == 0x03) { 
                 if (is_claw_mode) claw_execute_command("stop");
                 else if (!is_cam_mode) servo_set_action("stop");
-            } else if (c == 0x04) { 
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
             } else if (c == '\r' || c == '\n') {
                 if (cmd_idx > 0) {
                     cmd[cmd_idx] = '\0';
@@ -87,6 +89,9 @@ static void console_read_task(void *pvParameter) {
                         logger_clear();
                     } else if (strcmp(cmd, "log size") == 0) {
                         printf("[LOGGER] Current debug log file size: %d bytes\n", (int)logger_get_size());
+                    } else if (strcmp(cmd, "reboot") == 0) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        esp_restart();
                     } else if (strcmp(cmd, "reset") == 0) {
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
