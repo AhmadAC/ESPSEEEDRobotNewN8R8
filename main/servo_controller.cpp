@@ -43,6 +43,7 @@ static const ledc_channel_t servo_channels[4] = {
 static bool servos_active = false;
 static bool ledc_initialized = false;
 static TimerHandle_t servo_auto_relax_timer = NULL;
+static volatile bool auto_relax_requested = false;
 
 // State Variables (Logical angles: 0 = Left, 180 = Right)
 static int32_t target_low_left   = 90;
@@ -75,20 +76,22 @@ static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
 // Forward declaration
 static void relax_all_servos();
 
+// Pure, zero-stack callback: flags the animation task instead of calling heavy functions
 static void servo_relax_timer_cb(TimerHandle_t xTimer) {
     if (active_animation == 0) {
-        relax_all_servos();
-        ESP_LOGI(TAG, "Static position reached. Servos auto-relaxed to protect battery.");
+        auto_relax_requested = true;
     }
 }
 
 static void schedule_auto_relax() {
+    auto_relax_requested = false;
     if (active_animation == 0 && servo_auto_relax_timer != NULL) {
         xTimerReset(servo_auto_relax_timer, 0);
     }
 }
 
 static void cancel_auto_relax() {
+    auto_relax_requested = false;
     if (servo_auto_relax_timer != NULL) {
         xTimerStop(servo_auto_relax_timer, 0);
     }
@@ -105,9 +108,6 @@ static void init_servo_ledc() {
     ledc_timer.clk_cfg          = LEDC_AUTO_CLK;
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    // STAGGERED PHASE TIMING (hpoints: 0, 1500, 3000, 4500):
-    // Offsets each servo pulse within the 20ms period so all 4 servos never pulse
-    // at the exact same microsecond, cutting peak current by ~75%!
     const uint32_t staggered_hpoints[4] = {0, 1500, 3000, 4500};
 
     for (int i = 0; i < 4; i++) {
@@ -139,7 +139,6 @@ static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle,
     
     if (final_angle > 180) final_angle = 180;
     
-    // 13-bit: 500us (0 deg) = 205, 2500us (180 deg) = 1024
     uint32_t duty = 205 + ((1024 - 205) * final_angle) / 180;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
@@ -167,7 +166,6 @@ static void relax_all_servos() {
         }
     }
 
-    // Force pins directly to 0V output
     for (int i = 0; i < 4; i++) {
         gpio_set_level(servo_pins[i], 0);
     }
@@ -183,6 +181,13 @@ static bool current_is_sit() {
 
 static void servo_animation_task(void *pv) {
     while(1) {
+        // Handle auto-relax request safely within this high-stack task
+        if (auto_relax_requested) {
+            auto_relax_requested = false;
+            relax_all_servos();
+            ESP_LOGI(TAG, "Static position reached. Servos auto-relaxed to protect battery.");
+        }
+
         if (!servos_active) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
@@ -498,9 +503,6 @@ static void servo_animation_task(void *pv) {
 }
 
 void servo_controller_init() {
-    // -------------------------------------------------------------------------
-    // CRITICAL FIX: Ensure clean 0V output clamp without calling gpio_reset_pin()
-    // -------------------------------------------------------------------------
     gpio_config_t servo_io_cfg = {};
     servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
     servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
@@ -533,12 +535,11 @@ void servo_controller_init() {
         nvs_close(my_handle);
     }
 
-    // Servos stay completely dormant and drawing 0.00A on boot
     servos_active = false;
     active_animation = 0;
     ledc_initialized = false;
+    auto_relax_requested = false;
 
-    // Auto-relax timer: after 4 seconds of static hold, stops PWM to prevent battery sag
     servo_auto_relax_timer = xTimerCreate("srv_relax", pdMS_TO_TICKS(4000), pdFALSE, NULL, servo_relax_timer_cb);
 
     xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);

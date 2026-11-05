@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <stdio.h>
 #include <string.h>
@@ -32,8 +33,14 @@ static int file_vprintf(const char *fmt, va_list args) {
     }
     va_end(args_copy);
 
-    // 2. Prevent writing to flash from interrupt service routines
+    // 2. Prevent writing to flash from interrupt service routines or timer service tasks
     if (xPortInIsrContext() || !spiffs_mounted || log_mutex == NULL) {
+        return ret;
+    }
+
+    // Timer tasks (Tmr Svc / esp_timer) have very small stacks; skip flash I/O inside them
+    const char *task_name = pcTaskGetName(NULL);
+    if (task_name && (strcmp(task_name, "Tmr Svc") == 0 || strcmp(task_name, "esp_timer") == 0)) {
         return ret;
     }
 

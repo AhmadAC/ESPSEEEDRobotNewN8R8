@@ -1,9 +1,13 @@
+# sdkconfig.defaults
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # DISABLE BROWNOUT DETECTOR: Prevents battery voltage sag from causing continuous reboot loops
 CONFIG_ESP_BROWNOUT_DET=n
+
+# Double FreeRTOS Timer service stack size to prevent stack overflow
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 
 # Enable NimBLE Bluetooth Engine
 CONFIG_BT_ENABLED=y
@@ -33,5 +37,5 @@ CONFIG_HTTPD_MAX_URI_LEN=1024
 # ENABLE WEBSOCKET SUPPORT FOR GAMEPAD CONTROL
 CONFIG_HTTPD_WS_SUPPORT=y
 
-# CRITICAL FIX: Increase LwIP Sockets to handle Captive Portal background spam + UI Polling
+# Increase LwIP Sockets to handle Captive Portal background spam + UI Polling
 CONFIG_LWIP_MAX_SOCKETS=16
