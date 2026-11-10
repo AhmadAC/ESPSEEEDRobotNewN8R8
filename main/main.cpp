@@ -1,4 +1,4 @@
-// main\main.cpp
+// 11-3ESPSEEEDRobotNewN8R8/main/main.cpp
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -12,7 +12,7 @@
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
 
-// Bulletproof VFS inclusion across ESP-IDF v4.x, v5.0, v5.2, and v5.3+
+// Bulletproof VFS inclusion across ESP-IDF versions
 #if __has_include("esp_vfs_dev.h")
 #include "esp_vfs_dev.h"
 #endif
@@ -50,7 +50,6 @@ static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_config_t usbjtag_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbjtag_cfg);
 
-    // CRITICAL FIX: Ensure the console VFS remains non-blocking even after driver install.
 #if __has_include("driver/usb_serial_jtag_vfs.h")
     usb_serial_jtag_vfs_use_nonblocking();
 #else
@@ -62,7 +61,6 @@ static void console_read_task(void *pvParameter) {
     static bool repl_sync = false;
     
     while (1) {
-        // If not connected to a USB PC host (running on battery power), sleep and do not poll
         if (!usb_serial_jtag_is_connected()) {
             cmd_idx = 0;
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -70,7 +68,7 @@ static void console_read_task(void *pvParameter) {
         }
 
         uint8_t c = 0;
-        int len = usb_serial_jtag_read_bytes(&c, 1, 0); // 0 ticks timeout = strictly non-blocking
+        int len = usb_serial_jtag_read_bytes(&c, 1, 0);
         
         if (len > 0) {
             if (c == 0x03) { 
@@ -80,7 +78,6 @@ static void console_read_task(void *pvParameter) {
                 if (cmd_idx > 0) {
                     cmd[cmd_idx] = '\0';
                     
-                    // --- Persistent Log Inspection Commands ---
                     if (strcmp(cmd, "log") == 0 || strcmp(cmd, "logs") == 0 || strcmp(cmd, "cat log") == 0) {
                         logger_print_all();
                     } else if (strcmp(cmd, "log tail") == 0) {
@@ -205,7 +202,7 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // 1. HARD CLAMP ALL SERVO LINES TO STRICT 0V OUTPUT IMMEDIATELY.
+    // 1. Hardware clamp servo pins to strict 0V output
     gpio_config_t servo_io_cfg = {};
     servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
     servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
@@ -236,7 +233,7 @@ extern "C" void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    // 3. Initialize Flash File Logger (Captures logs to /spiffs/debug.log on battery)
+    // 3. Initialize Flash File Logger
     logger_init();
 
     esp_log_level_set("wifi", ESP_LOG_ERROR);    
@@ -258,11 +255,16 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // 6. Start Wi-Fi AP + Web Server FIRST with servos strictly dormant.
-    ESP_LOGI(TAG, "Starting Wi-Fi and Web Server FIRST to ensure connectivity on battery");
+    // 6. Initialize Wi-Fi and Web Server
+    ESP_LOGI(TAG, "Starting Wi-Fi and Web Server...");
     wifi_manager_init();
     web_server_init();
 
+    // 7. Initialize Bluetooth Low Energy Engine (Nordic UART Service)
+    ESP_LOGI(TAG, "Starting Bluetooth LE Subsystem for iPhone app connection...");
+    ble_manager_init();
+
+    // 8. Initialize Peripherals based on mode
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
@@ -279,8 +281,8 @@ extern "C" void app_main(void) {
         servo_controller_init();
     }
 
-    // 7. Start non-blocking USB Serial/JTAG console task
+    // 9. Start USB Serial/JTAG console task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "Boot Sequence Complete! Servos dormant, Wi-Fi Server Active, Logger running.");
+    ESP_LOGI(TAG, "Boot Sequence Complete! Bluetooth, Wi-Fi, Servos and Audio are Active.");
 }
