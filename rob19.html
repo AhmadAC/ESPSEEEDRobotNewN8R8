@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100 select-none">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>ESP32 Robot Dog Controller</title>
+
+  <style>
+    *, ::before, ::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: #334155; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; width: 100%; }
+    body {
+      background-color: #020617;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 10px 14px 12px 14px;
+    }
+
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: #334155;
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #38bdf8;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+      border: 2px solid #ffffff;
+    }
+
+    /* Touch buttons */
+    .touch-btn {
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      color: #f1f5f9;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.08s ease;
+      touch-action: manipulation;
+    }
+    .touch-btn:active, .touch-btn.pressed {
+      transform: scale(0.94);
+      background: #0284c7 !important;
+      border-color: #38bdf8 !important;
+      color: #ffffff !important;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+    }
+
+    .btn-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 6px 4px;
+      text-align: center;
+      transition: all 0.05s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 52px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .btn-card:hover { border-color: #38bdf8; }
+    .btn-card:active, .btn-card.pressed {
+      background: #10b981 !important;
+      border-color: #10b981 !important;
+      color: #000 !important;
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.7);
+      transform: scale(0.95);
+    }
+    .btn-card.selected-btn {
+      border-color: #f59e0b !important;
+      background: rgba(245, 158, 11, 0.2) !important;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+    }
+    .btn-cmd-label {
+      font-size: 8.5px;
+      color: rgba(255, 255, 255, 0.6);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 70px;
+      margin-top: 2px;
+    }
+
+    .axis-bar-bg {
+      flex-grow: 1;
+      height: 10px;
+      background: #1e293b;
+      border-radius: 5px;
+      position: relative;
+      overflow: hidden;
+    }
+    .axis-bar-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: #38bdf8;
+      width: 0%;
+      transition: width 0.05s linear, left 0.05s linear;
+    }
+
+    .key-editor-panel {
+      background: rgba(2, 6, 23, 0.85);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sync-toggle-btn {
+      flex: 1;
+      padding: 10px 8px;
+      border-radius: 10px;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .sync-toggle-btn.active {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #ffffff;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+
+    @keyframes pulse-dot {
+      0% { opacity: 0.2; }
+      50% { opacity: 1; }
+      100% { opacity: 0.2; }
+    }
+    .pulse { animation: pulse-dot 1.5s infinite; }
+  </style>
+</head>
+
+<body>
+
+  <!-- Top Header Bar -->
+  <header style="padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:space-between;">
+    <div>
+      <h1 style="font-size:1.05rem; font-weight:700; letter-spacing:-0.02em;">Robot Dog Control Center</h1>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+        <div id="status-dot" style="width:8px; height:8px; border-radius:9999px; background:#f43f5e; box-shadow:0 0 6px #f43f5e; transition:background 0.2s;"></div>
+        <span id="status-text" style="font-size:11px; color:rgba(255,255,255,0.6);">Disconnected</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span id="backend-badge" style="padding:3px 8px; border-radius:9999px; background:rgba(255,255,255,0.1); font-size:10px; color:rgba(255,255,255,0.6);">Core BLE</span>
+    </div>
+  </header>
+
+  <!-- Connection Status / Pairing Bar -->
+  <div class="glass-panel" style="margin:8px 0; padding:10px 14px; border-radius:14px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div style="min-width:0; flex:1;">
+      <div style="font-size:10px; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Active Robot</div>
+      <div id="device-name" style="font-size:13px; font-weight:700; color:white; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">None Connected</div>
+    </div>
+    <button id="connect-btn" type="button" onclick="toggleConnection()" style="height:40px; padding:0 16px; border-radius:10px; background:#2563eb; color:white; font-size:12px; font-weight:700; border:none; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 4px 12px rgba(37,99,235,0.4);">
+      <svg style="width:15px; height:15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6.5 6.5 11 11L12 23V1l5.5 5.5-11 11"></path>
+      </svg>
+      <span>Connect BLE</span>
+    </button>
+  </div>
+
+  <!-- Scrollable Center -->
+  <main style="flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding-right:2px;" class="no-scrollbar">
+
+    <!-- 1. TOUCH MOTION & D-PAD (PHONE SCREEN CONTROLS) -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+          <svg style="width:15px; height:15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>
+          </svg>
+          Direct Touch Motion Controls
+        </span>
+        <button type="button" onclick="sendCommand('stop')" style="padding:4px 10px; border-radius:8px; background:#ef4444; color:white; font-size:10px; font-weight:700; border:none; cursor:pointer;">EMERGENCY STOP</button>
+      </div>
+
+      <!-- D-Pad Grid -->
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; max-width:280px; margin:0 auto; width:100%;">
+        <div></div>
+        <button type="button" class="touch-btn" onclick="sendCommand('forward')" style="height:48px;">
+          <span style="font-size:16px;">▲</span>
+          <span style="font-size:9px;">FORWARD</span>
+        </button>
+        <div></div>
+
+        <button type="button" class="touch-btn" onclick="sendCommand('left_wave')" style="height:48px;">
+          <span style="font-size:16px;">◀</span>
+          <span style="font-size:9px;">LEFT</span>
+        </button>
+        <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="height:48px; background:#475569;">
+          <span style="font-size:14px; font-weight:800;">■</span>
+          <span style="font-size:9px;">STOP</span>
+        </button>
+        <button type="button" class="touch-btn" onclick="sendCommand('right_wave')" style="height:48px;">
+          <span style="font-size:16px;">▶</span>
+          <span style="font-size:9px;">RIGHT</span>
+        </button>
+
+        <div></div>
+        <button type="button" class="touch-btn" onclick="sendCommand('backward')" style="height:48px;">
+          <span style="font-size:16px;">▼</span>
+          <span style="font-size:9px;">BACKWARD</span>
+        </button>
+        <div></div>
+      </div>
+
+      <!-- Quick Action Poses -->
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin-top:2px;">
+        <button type="button" class="touch-btn" onclick="sendCommand('stand')" style="padding:8px 4px; font-size:11px;">Stand</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('sit')" style="padding:8px 4px; font-size:11px;">Sit</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('crawl')" style="padding:8px 4px; font-size:11px;">Crawl</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('leap_forward')" style="padding:8px 4px; font-size:11px;">Leap</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
+        <button type="button" class="touch-btn" onclick="sendCommand('stretch_down')" style="padding:8px 4px; font-size:10px;">Stretch Dn</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('stretch_back')" style="padding:8px 4px; font-size:10px;">Stretch Bk</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('step_forward')" style="padding:8px 4px; font-size:10px;">Step Fwd</button>
+        <button type="button" class="touch-btn" onclick="sendCommand('step_backward')" style="padding:8px 4px; font-size:10px;">Step Bwd</button>
+      </div>
+    </div>
+
+    <!-- 2. LEG SYNCHRONIZATION CONTROLS -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#a855f7; display:flex; align-items:center; gap:6px;">
+          <svg style="width:16px; height:16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 3h5v5"></path>
+            <path d="M8 21H3v-5"></path>
+            <path d="M21 3 14 10"></path>
+            <path d="M3 21l7-7"></path>
+          </svg>
+          Leg Synchronization Modes
+        </span>
+        <span id="sync-status-indicator" style="font-size:10px; color:rgba(255,255,255,0.5);">Independent</span>
+      </div>
+
+      <div style="display:flex; gap:6px;">
+        <button id="sync-front-btn" type="button" class="sync-toggle-btn" onclick="toggleSyncFront()">
+          <span>Front Legs Sync</span>
+        </button>
+        <button id="sync-back-btn" type="button" class="sync-toggle-btn" onclick="toggleSyncBack()">
+          <span>Back Legs Sync</span>
+        </button>
+        <button id="sync-all-btn" type="button" class="sync-toggle-btn" onclick="toggleSyncAll()">
+          <span>All 4 Legs Sync</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 3. SWITCH PRO CONTROLLER / ON-SCREEN KEYPAD (WITH REMAPPER) -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
+        <span style="font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+          <svg style="width:16px; height:16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="6" x2="10" y1="12" y2="12"></line><line x1="8" x2="8" y1="10" y2="14"></line>
+            <line x1="15" x2="15.01" y1="13" y2="13"></line><line x1="18" x2="18.01" y1="11" y2="11"></line>
+            <rect width="20" height="12" x="2" y="6" rx="6"></rect>
+          </svg>
+          <span>Switch Buttons Matrix</span>
+        </span>
+ 
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-touch-mode" type="button" onclick="toggleRemapMode()" style="padding:3px 9px; font-size:10px; font-weight:700; border-radius:9999px; background:#0284c7; color:white; border:none; cursor:pointer;">
+            Tap Action: SEND
+          </button>
+          <button id="btn-toggle-retract" type="button" onclick="toggleAutoRetract()" style="padding:3px 9px; font-size:10px; font-weight:700; border-radius:9999px; background:#10b981; color:white; border:none; cursor:pointer;">
+            Retract: ON
+          </button>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:rgba(255,255,255,0.6);">
+        <span id="gamepad-mode-hint">Tap any button to trigger it immediately.</span>
+        <span id="gp-badge" style="font-size:10px; padding:2px 8px; border-radius:9999px; background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.5);">No BT Gamepad</span>
+      </div>
+
+      <!-- 16-Button Grid (Tap to send OR Tap to remap) -->
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;" id="switch-buttons-grid">
+        <div id="gp-btn-0" class="btn-card" onclick="onSwitchButtonCardClick(0)"><span style="font-size:13px; font-weight:700;">B</span><span class="btn-cmd-label" id="gp-lbl-0">Stop</span></div>
+        <div id="gp-btn-1" class="btn-card" onclick="onSwitchButtonCardClick(1)"><span style="font-size:13px; font-weight:700;">A</span><span class="btn-cmd-label" id="gp-lbl-1">Stand</span></div>
+        <div id="gp-btn-2" class="btn-card" onclick="onSwitchButtonCardClick(2)"><span style="font-size:13px; font-weight:700;">Y</span><span class="btn-cmd-label" id="gp-lbl-2">Sit</span></div>
+        <div id="gp-btn-3" class="btn-card" onclick="onSwitchButtonCardClick(3)"><span style="font-size:13px; font-weight:700;">X</span><span class="btn-cmd-label" id="gp-lbl-3">Bark</span></div>
+
+        <div id="gp-btn-4" class="btn-card" onclick="onSwitchButtonCardClick(4)"><span style="font-size:13px; font-weight:700;">L</span><span class="btn-cmd-label" id="gp-lbl-4">Tone</span></div>
+        <div id="gp-btn-5" class="btn-card" onclick="onSwitchButtonCardClick(5)"><span style="font-size:13px; font-weight:700;">R</span><span class="btn-cmd-label" id="gp-lbl-5">Stop</span></div>
+        <div id="gp-btn-6" class="btn-card" onclick="onSwitchButtonCardClick(6)"><span style="font-size:13px; font-weight:700;">ZL</span><span class="btn-cmd-label" id="gp-lbl-6">Vol -</span></div>
+        <div id="gp-btn-7" class="btn-card" onclick="onSwitchButtonCardClick(7)"><span style="font-size:13px; font-weight:700;">ZR</span><span class="btn-cmd-label" id="gp-lbl-7">Vol +</span></div>
+
+        <div id="gp-btn-8" class="btn-card" onclick="onSwitchButtonCardClick(8)"><span style="font-size:13px; font-weight:700;">-</span><span class="btn-cmd-label" id="gp-lbl-8">Stretch Bk</span></div>
+        <div id="gp-btn-9" class="btn-card" onclick="onSwitchButtonCardClick(9)"><span style="font-size:13px; font-weight:700;">+</span><span class="btn-cmd-label" id="gp-lbl-9">Stretch Dn</span></div>
+        <div id="gp-btn-10" class="btn-card" onclick="onSwitchButtonCardClick(10)"><span style="font-size:13px; font-weight:700;">L3</span><span class="btn-cmd-label" id="gp-lbl-10">Crawl</span></div>
+        <div id="gp-btn-11" class="btn-card" onclick="onSwitchButtonCardClick(11)"><span style="font-size:13px; font-weight:700;">R3</span><span class="btn-cmd-label" id="gp-lbl-11">Leap</span></div>
+
+        <div id="gp-btn-12" class="btn-card" onclick="onSwitchButtonCardClick(12)"><span style="font-size:13px; font-weight:700;">&uarr; Up</span><span class="btn-cmd-label" id="gp-lbl-12">Forward</span></div>
+        <div id="gp-btn-13" class="btn-card" onclick="onSwitchButtonCardClick(13)"><span style="font-size:13px; font-weight:700;">&darr; Dn</span><span class="btn-cmd-label" id="gp-lbl-13">Backward</span></div>
+        <div id="gp-btn-14" class="btn-card" onclick="onSwitchButtonCardClick(14)"><span style="font-size:13px; font-weight:700;">&larr; L</span><span class="btn-cmd-label" id="gp-lbl-14">L Wave</span></div>
+        <div id="gp-btn-15" class="btn-card" onclick="onSwitchButtonCardClick(15)"><span style="font-size:13px; font-weight:700;">&rarr; R</span><span class="btn-cmd-label" id="gp-lbl-15">R Wave</span></div>
+      </div>
+
+      <!-- Joysticks Axes Monitor -->
+      <div style="display:flex; flex-direction:column; gap:6px; margin-top:2px;">
+        <div style="display:flex; align-items:center; gap:8px; background:rgba(15,23,42,0.6); padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); font-size:10px;">
+          <span style="width:48px; font-weight:600; color:rgba(255,255,255,0.6);">L-Stick:</span>
+          <div class="axis-bar-bg"><div id="axis-bar-0" class="axis-bar-fill" style="left:50%; width:0%;"></div></div>
+          <span id="axis-val-0" style="width:32px; text-align:right; font-family:monospace; color:rgba(255,255,255,0.8);">0.00</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; background:rgba(15,23,42,0.6); padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); font-size:10px;">
+          <span style="width:48px; font-weight:600; color:rgba(255,255,255,0.6);">R-Stick:</span>
+          <div class="axis-bar-bg"><div id="axis-bar-2" class="axis-bar-fill" style="left:50%; width:0%;"></div></div>
+          <span id="axis-val-2" style="width:32px; text-align:right; font-family:monospace; color:rgba(255,255,255,0.8);">0.00</span>
+        </div>
+      </div>
+
+      <!-- Remapping Panel (Visible when Remap mode is active) -->
+      <div class="key-editor-panel" id="switch-editor-box" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span id="switch-editor-title" style="font-size:11px; font-weight:700; color:#f59e0b;">Button B Configuration</span>
+          <span style="font-size:9px; color:rgba(255,255,255,0.4);">Custom Remapper</span>
+        </div>
+
+        <div>
+          <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px;">Quick Action Preset:</label>
+          <select id="switch-preset-select" onchange="onSelectSwitchPreset(this.value)" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:8px; padding:6px 8px; font-size:11px; outline:none;">
+            <option value="">-- Choose Quick Preset --</option>
+            <optgroup label="Robot Dog Locomotion">
+              <option value="forward">Walk Forward</option>
+              <option value="backward">Walk Backward</option>
+              <option value="step_forward">Step Forward</option>
+              <option value="step_backward">Step Backward</option>
+              <option value="leap_forward">Leap Forward</option>
+              <option value="crawl">Forward Crawl</option>
+              <option value="stop">Stop All Motion</option>
+            </optgroup>
+            <optgroup label="Robot Dog Poses & Gestures">
+              <option value="stand">Stand Up</option>
+              <option value="sit">Sit Down</option>
+              <option value="stretch_down">Stretch Down</option>
+              <option value="stretch_back">Stretch Back</option>
+              <option value="left_wave">Left Leg Wave</option>
+              <option value="right_wave">Right Leg Wave</option>
+              <option value="sync_front on">Front Legs Sync ON</option>
+              <option value="sync_back on">Back Legs Sync ON</option>
+              <option value="sync_all on">All 4 Legs Sync ON</option>
+            </optgroup>
+            <optgroup label="Audio Triggers">
+              <option value="bark">Dog Bark Audio</option>
+              <option value="beep">Diagnostic Test Tone</option>
+              <option value="stop">Stop Speaker Sound</option>
+            </optgroup>
+            <optgroup label="Volume Controls">
+              <option value="vol -10">Volume Down (-10%)</option>
+              <option value="vol +10">Volume Up (+10%)</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px;">Command Text:</label>
+          <input type="text" id="switch-cmd-input" placeholder="e.g. forward, sit, bark, angle 90" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:8px; padding:6px 10px; font-size:11px; outline:none; font-family:monospace;">
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:2px;">
+          <button type="button" onclick="saveSwitchButtonMapping()" style="padding:8px; border-radius:8px; background:#10b981; color:white; font-size:11px; font-weight:700; border:none; cursor:pointer;">
+            Save Remap
+          </button>
+          <button type="button" onclick="testActiveSwitchButtonCommand()" style="padding:8px; border-radius:8px; background:#0284c7; color:white; font-size:11px; font-weight:700; border:none; cursor:pointer;">
+            Test Trigger
+          </button>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
+        <button type="button" onclick="requestSyncSwitchButtons()" style="background:none; border:none; color:#38bdf8; font-size:10px; font-weight:600; cursor:pointer;">Sync from ESP32</button>
+        <button type="button" onclick="resetSwitchButtonDefaults()" style="background:none; border:none; color:rgba(255,255,255,0.5); font-size:10px; cursor:pointer;">Reset Defaults</button>
+      </div>
+    </div>
+
+    <!-- 4. SERVO MOTOR CONTROL CARD -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
+        <span style="font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:rgba(255,255,255,0.6);">Joint / Claw Position</span>
+        <span id="angle-val" style="color:#38bdf8; font-family:monospace; font-weight:700; font-size:14px;">90&deg;</span>
+      </div>
+
+      <div style="padding:4px 0;">
+        <input type="range" id="angle-slider" min="0" max="180" value="90" oninput="onAngleSliderMove(this.value)">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:rgba(255,255,255,0.4); margin-top:4px;">
+          <span>0&deg;</span><span>45&deg;</span><span>90&deg;</span><span>135&deg;</span><span>180&deg;</span>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px;">
+        <button type="button" class="touch-btn" onclick="setAngle(0)" style="padding:6px; font-size:11px;">0&deg;</button>
+        <button type="button" class="touch-btn" onclick="setAngle(45)" style="padding:6px; font-size:11px;">45&deg;</button>
+        <button type="button" class="touch-btn" onclick="setAngle(90)" style="padding:6px; font-size:11px;">90&deg;</button>
+        <button type="button" class="touch-btn" onclick="setAngle(135)" style="padding:6px; font-size:11px;">135&deg;</button>
+        <button type="button" class="touch-btn" onclick="setAngle(180)" style="padding:6px; font-size:11px;">180&deg;</button>
+      </div>
+    </div>
+
+    <!-- 5. HT517 SPEAKER AUDIO CARD -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
+        <span style="font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:rgba(255,255,255,0.6);">HT517 Speaker</span>
+        <span id="vol-val" style="color:#34d399; font-family:monospace; font-weight:700; font-size:14px;">Vol: 80%</span>
+      </div>
+
+      <div style="padding:4px 0;">
+        <input type="range" id="vol-slider" min="0" max="100" value="80" oninput="onVolSliderMove(this.value)">
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+        <button type="button" class="touch-btn" onclick="sendCommand('bark')" style="padding:10px; background:#059669; font-size:12px;">
+          Bark (X)
+        </button>
+        <button type="button" class="touch-btn" onclick="sendCommand('beep')" style="padding:10px; background:#0284c7; font-size:12px;">
+          Tone (L)
+        </button>
+        <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="padding:10px; background:#334155; font-size:12px;">
+          Stop (R)
+        </button>
+      </div>
+    </div>
+
+    <!-- 6. HYPERSONIC SENSOR CARD -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#ef4444; display:flex; align-items:center; gap:6px;">
+          <svg style="width:15px; height:15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+          </svg>
+          Obstacle Sensor
+        </span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span id="sens-live-dist" style="font-size:12px; font-family:monospace; font-weight:bold; color:rgba(255,255,255,0.4);">--</span>
+          <button id="sensor-toggle-btn" type="button" onclick="toggleSensor()" style="padding:4px 10px; border-radius:8px; background:#ef4444; color:white; font-size:10px; font-weight:700; border:none; cursor:pointer;">DISABLED</button>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top:4px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:rgba(255,255,255,0.7);">
+          <span>Safety Halt Threshold: <span id="sens-dist-val" style="color:#38bdf8; font-family:monospace; font-weight:bold;">20cm</span></span>
+        </div>
+        <input type="range" id="sens-dist-slider" min="5" max="100" value="20" onchange="updateSensorConfig()" oninput="document.getElementById('sens-dist-val').innerText = this.value + 'cm'">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div style="background:rgba(15,23,42,0.6); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
+            <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px; text-transform:uppercase; font-weight:bold;">Tripped Action</label>
+            <select id="sens-trip-act" onchange="updateSensorConfig()" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:6px; padding:6px; font-size:10px; outline:none;">
+              <option value="stop">Stop</option>
+              <option value="backward">Walk Backward</option>
+              <option value="sit">Sit</option>
+              <option value="none">None</option>
+            </select>
+            <div style="margin-top:8px;">
+              <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px; text-transform:uppercase; font-weight:bold;">Tripped Audio</label>
+              <select id="sens-trip-aud" onchange="updateSensorConfig()" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:6px; padding:6px; font-size:10px; outline:none;">
+                <option value="none">Mute</option>
+                <option value="dog_bark">Dog Bark</option>
+                <option value="test_beep">Test Tone</option>
+              </select>
+            </div>
+          </div>
+          <div style="background:rgba(15,23,42,0.6); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
+            <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px; text-transform:uppercase; font-weight:bold;">Cleared Action</label>
+            <select id="sens-clear-act" onchange="updateSensorConfig()" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:6px; padding:6px; font-size:10px; outline:none;">
+              <option value="stand">Stand Up</option>
+              <option value="forward">Walk Forward</option>
+              <option value="none">None</option>
+            </select>
+            <div style="margin-top:8px;">
+              <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px; text-transform:uppercase; font-weight:bold;">Cleared Audio</label>
+              <select id="sens-clear-aud" onchange="updateSensorConfig()" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:6px; padding:6px; font-size:10px; outline:none;">
+                <option value="none">Mute</option>
+                <option value="dog_bark">Dog Bark</option>
+                <option value="test_beep">Test Tone</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7. TERMINAL LOG -->
+    <div class="glass-panel" style="border-radius:16px; padding:12px; height:120px; display:flex; flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:6px; font-size:11px; color:rgba(255,255,255,0.6);">
+        <span>Serial Log</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button type="button" onclick="exportTerminalLogs()" style="background:none; border:none; color:#38bdf8; font-size:11px; cursor:pointer; font-weight:600;">Export</button>
+          <button type="button" onclick="clearLogs()" style="background:none; border:none; color:rgba(255,255,255,0.6); font-size:11px; cursor:pointer;">Clear</button>
+        </div>
+      </div>
+      <div id="terminal" style="flex:1; overflow-y:auto; padding-top:6px; font-family:monospace; font-size:10px; color:rgba(255,255,255,0.8); display:flex; flex-direction:column; gap:4px;">
+        <div style="color:rgba(255,255,255,0.4); font-style:italic;">Ready to connect...</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Custom Command Bar -->
+  <footer style="margin-top:8px;">
+    <form onsubmit="handleSendCustom(event)" style="display:flex; gap:8px;">
+      <input type="text" id="cmd-input" placeholder="Type custom command..." style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px 12px; font-size:12px; color:white; outline:none;">
+      <button type="submit" style="padding:0 16px; border-radius:12px; background:#0284c7; color:white; font-size:12px; font-weight:600; border:none; cursor:pointer;">
+        Send
+      </button>
+    </form>
+  </footer>
+
+  <script>
+    // NORDIC UART SERVICE (NUS) UUIDs
+    const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // ESP32 Receive (Phone write)
+    const UART_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // ESP32 Transmit (Phone notify)
+
+    let isConnected = false;
+    let bleBackend = null;
+    let nativeDeviceId = null;
+    let webDevice = null;
+    let webServer = null;
+    let webTxChar = null;
+
+    let currentAngle = 90;
+    let currentVolumeNum = 80;
+
+    let isAngleThrottled = false;
+    let pendingAngle = null;
+    let isVolThrottled = false;
+    let pendingVol = null;
+    let isSending = false;
+    let rawLogLines = [];
+    let statusPollInterval = null;
+
+    // LEG SYNCHRONIZATION STATES
+    let syncFrontActive = false;
+    let syncBackActive = false;
+    let syncAllActive = false;
+
+    // AUTO-RETRACTION & BUTTON REMAP MODES
+    let autoRetractEnabled = true;
+    let wasJoystickActive = false;
+    let isRemapMode = false; // When false: screen clicks instantly trigger commands. When true: screen clicks select for editing.
+
+    // HYPERSONIC SENSOR STATES
+    let sensorEnabled = false;
+
+    const SWITCH_BUTTON_NAMES = [
+      "B", "A", "Y", "X",
+      "L", "R", "ZL", "ZR",
+      "-", "+", "L3", "R3",
+      "D-Up", "D-Down", "D-Left", "D-Right"
+    ];
+
+    const DEFAULT_SWITCH_MAP = {
+      0: "stop",
+      1: "stand",
+      2: "sit",
+      3: "bark",
+      4: "beep",
+      5: "stop",
+      6: "vol -10",
+      7: "vol +10",
+      8: "stretch_back",
+      9: "stretch_down",
+      10: "crawl",
+      11: "leap_forward",
+      12: "forward",
+      13: "backward",
+      14: "left_wave",
+      15: "right_wave"
+    };
+
+    let switchKeyMap = {};
+    let selectedSwitchIndex = 0;
+
+    // LEG SYNC HANDLERS
+    function toggleSyncFront() {
+      syncFrontActive = !syncFrontActive;
+      const cmd = syncFrontActive ? "sync_front on" : "sync_front off";
+      sendCommand(cmd);
+      updateSyncUI();
+      appendLog("Sync", `Front Legs Sync: ${syncFrontActive ? 'ENABLED' : 'DISABLED'}`);
+    }
+
+    function toggleSyncBack() {
+      syncBackActive = !syncBackActive;
+      const cmd = syncBackActive ? "sync_back on" : "sync_back off";
+      sendCommand(cmd);
+      updateSyncUI();
+      appendLog("Sync", `Back Legs Sync: ${syncBackActive ? 'ENABLED' : 'DISABLED'}`);
+    }
+
+    function toggleSyncAll() {
+      syncAllActive = !syncAllActive;
+      if (syncAllActive) {
+        syncFrontActive = true;
+        syncBackActive = true;
+      } else {
+        syncFrontActive = false;
+        syncBackActive = false;
+      }
+      const cmd = syncAllActive ? "sync_all on" : "sync_all off";
+      sendCommand(cmd);
+      updateSyncUI();
+      appendLog("Sync", `All 4 Legs Sync: ${syncAllActive ? 'ENABLED' : 'DISABLED'}`);
+    }
+
+    function updateSyncUI() {
+      const btnF = document.getElementById('sync-front-btn');
+      const btnB = document.getElementById('sync-back-btn');
+      const btnA = document.getElementById('sync-all-btn');
+      const ind = document.getElementById('sync-status-indicator');
+
+      if (syncFrontActive) btnF.classList.add('active'); else btnF.classList.remove('active');
+      if (syncBackActive) btnB.classList.add('active'); else btnB.classList.remove('active');
+      if (syncAllActive) btnA.classList.add('active'); else btnA.classList.remove('active');
+
+      if (syncAllActive) {
+        ind.innerText = "All 4 Synced";
+        ind.style.color = "#38bdf8";
+      } else if (syncFrontActive && syncBackActive) {
+        ind.innerText = "Front & Back Synced";
+        ind.style.color = "#38bdf8";
+      } else if (syncFrontActive) {
+        ind.innerText = "Front Synced";
+        ind.style.color = "#a855f7";
+      } else if (syncBackActive) {
+        ind.innerText = "Back Synced";
+        ind.style.color = "#a855f7";
+      } else {
+        ind.innerText = "Independent";
+        ind.style.color = "rgba(255,255,255,0.5)";
+      }
+    }
+
+    // TOGGLE REMAP VS TRIGGER ON SCREEN
+    function toggleRemapMode() {
+      isRemapMode = !isRemapMode;
+      const btn = document.getElementById('btn-touch-mode');
+      const editor = document.getElementById('switch-editor-box');
+      const hint = document.getElementById('gamepad-mode-hint');
+
+      if (isRemapMode) {
+        btn.innerText = "Tap Action: REMAP";
+        btn.style.background = "#f59e0b";
+        editor.style.display = "flex";
+        hint.innerText = "Tap any button card below to edit its assigned command.";
+        selectSwitchButton(selectedSwitchIndex);
+      } else {
+        btn.innerText = "Tap Action: SEND";
+        btn.style.background = "#0284c7";
+        editor.style.display = "none";
+        hint.innerText = "Tap any button to trigger it immediately.";
+        for (let i = 0; i < 16; i++) {
+          const card = document.getElementById(`gp-btn-${i}`);
+          if (card) card.classList.remove('selected-btn');
+        }
+      }
+    }
+
+    function onSwitchButtonCardClick(idx) {
+      if (isRemapMode) {
+        selectSwitchButton(idx);
+      } else {
+        // Instant trigger mode
+        const card = document.getElementById(`gp-btn-${idx}`);
+        if (card) {
+          card.classList.add('pressed');
+          setTimeout(() => card.classList.remove('pressed'), 120);
+        }
+        handleButtonPress(idx);
+      }
+    }
+
+    function initSwitchButtonMap() {
+      try {
+        const stored = localStorage.getItem('esp32_switch_map');
+        if (stored) {
+          switchKeyMap = JSON.parse(stored);
+        } else {
+          switchKeyMap = Object.assign({}, DEFAULT_SWITCH_MAP);
+        }
+      } catch (e) {
+        switchKeyMap = Object.assign({}, DEFAULT_SWITCH_MAP);
+      }
+      updateAllSwitchButtonLabels();
+      selectSwitchButton(0);
+    }
+
+    function updateAllSwitchButtonLabels() {
+      for (let i = 0; i < 16; i++) {
+        const lbl = document.getElementById(`gp-lbl-${i}`);
+        if (lbl) {
+          lbl.innerText = switchKeyMap[i] || "-";
+        }
+      }
+    }
+
+    function selectSwitchButton(idx) {
+      selectedSwitchIndex = idx;
+      for (let i = 0; i < 16; i++) {
+        const card = document.getElementById(`gp-btn-${i}`);
+        if (card) {
+          if (i === idx && isRemapMode) card.classList.add('selected-btn');
+          else card.classList.remove('selected-btn');
+        }
+      }
+
+      const name = SWITCH_BUTTON_NAMES[idx] || `Btn ${idx}`;
+      const titleElem = document.getElementById('switch-editor-title');
+      if (titleElem) {
+        titleElem.innerText = `Button ${name} Configuration`;
+      }
+
+      const currentCmd = switchKeyMap[idx] || "";
+      const input = document.getElementById('switch-cmd-input');
+      const select = document.getElementById('switch-preset-select');
+      if (input) input.value = currentCmd;
+      if (select) select.value = currentCmd;
+    }
+
+    function onSelectSwitchPreset(val) {
+      if (!val) return;
+      const input = document.getElementById('switch-cmd-input');
+      if (input) input.value = val;
+    }
+
+    async function saveSwitchButtonMapping() {
+      const input = document.getElementById('switch-cmd-input');
+      if (!input) return;
+      const cmd = input.value.trim();
+      if (!cmd) {
+        alert("Command text cannot be empty.");
+        return;
+      }
+
+      switchKeyMap[selectedSwitchIndex] = cmd;
+      try {
+        localStorage.setItem('esp32_switch_map', JSON.stringify(switchKeyMap));
+      } catch (e) {}
+
+      updateAllSwitchButtonLabels();
+
+      const bleCmd = `switchkey ${selectedSwitchIndex} ${cmd}`;
+      await sendCommand(bleCmd);
+      appendLog("Switch", `Button ${SWITCH_BUTTON_NAMES[selectedSwitchIndex]} mapped to: '${cmd}'`);
+    }
+
+    async function testActiveSwitchButtonCommand() {
+      const input = document.getElementById('switch-cmd-input');
+      if (!input) return;
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      await sendCommand(cmd);
+      appendLog("Test", `Sent Button ${SWITCH_BUTTON_NAMES[selectedSwitchIndex]} test: '${cmd}'`);
+    }
+
+    async function requestSyncSwitchButtons() {
+      appendLog("Sync", "Requesting Switch button mappings and status from ESP32...");
+      await sendCommand("getswitchkeys");
+      await sendCommand("status");
+    }
+
+    async function resetSwitchButtonDefaults() {
+      if (!confirm("Reset all 16 buttons to default robot motions?")) return;
+      switchKeyMap = Object.assign({}, DEFAULT_SWITCH_MAP);
+      try {
+        localStorage.setItem('esp32_switch_map', JSON.stringify(switchKeyMap));
+      } catch (e) {}
+      updateAllSwitchButtonLabels();
+      selectSwitchButton(selectedSwitchIndex);
+
+      await sendCommand("switchreset");
+      appendLog("Switch", "Restored all Switch buttons to default.");
+    }
+
+    // SENSOR CONFIG HANDLERS
+    function toggleSensor() {
+      sensorEnabled = !sensorEnabled;
+      updateSensorConfig();
+    }
+
+    function updateSensorConfig() {
+      const btn = document.getElementById('sensor-toggle-btn');
+      if (btn) {
+        btn.innerText = sensorEnabled ? "ENABLED" : "DISABLED";
+        btn.style.background = sensorEnabled ? "#10b981" : "#ef4444";
+      }
+
+      const th = parseInt(document.getElementById('sens-dist-slider')?.value || 20);
+      const trip = document.getElementById('sens-trip-act')?.value || "stop";
+      const clear = document.getElementById('sens-clear-act')?.value || "stand";
+      
+      const tripAudEl = document.getElementById('sens-trip-aud');
+      const clearAudEl = document.getElementById('sens-clear-aud');
+      const atrip = tripAudEl ? tripAudEl.value : "none";
+      const aclear = clearAudEl ? clearAudEl.value : "none";
+
+      const payload = {
+        sensor_enabled: sensorEnabled,
+        sensor_threshold: th,
+        sensor_tripped_action: trip,
+        sensor_cleared_action: clear,
+        sensor_tripped_audio: atrip,
+        sensor_cleared_audio: aclear
+      };
+
+      sendCommand(JSON.stringify(payload));
+    }
+
+    function handleIncomingBleData(rawText) {
+      if (!rawText) return;
+      const lines = rawText.split('\n');
+      lines.forEach(line => {
+        const text = line.trim();
+        if (!text) return;
+
+        // Skip adding periodic sensor/status strings to the log to prevent UI spam
+        if (!text.startsWith("STATUS:") && !text.startsWith("SENSOR:")) {
+          appendLog("ESP32", text);
+        }
+
+        if (text === "AUTORETRACT:ON") {
+          autoRetractEnabled = true;
+          updateRetractUI();
+        } else if (text === "AUTORETRACT:OFF") {
+          autoRetractEnabled = false;
+          updateRetractUI();
+        } else if (text === "AUTORETRACT:RETRACTED") {
+          updateAngleDisplay(0);
+        } else if (text.startsWith("SWKEY:")) {
+          const parts = text.substring(6).split('=');
+          if (parts.length >= 2) {
+            const btnIdx = parseInt(parts[0], 10);
+            const cmd = parts.slice(1).join('=');
+            if (btnIdx >= 0 && btnIdx < 16) {
+              switchKeyMap[btnIdx] = cmd;
+              try { localStorage.setItem('esp32_switch_map', JSON.stringify(switchKeyMap)); } catch (e) {}
+              updateAllSwitchButtonLabels();
+              if (selectedSwitchIndex === btnIdx) {
+                selectSwitchButton(btnIdx);
+              }
+            }
+          }
+        } else if (text.startsWith("STATUS:")) {
+          const matchA = text.match(/angle=(\d+)/);
+          const matchV = text.match(/vol=(\d+)/);
+          if (matchA) updateAngleDisplay(matchA[1]);
+          if (matchV) updateVolDisplay(matchV[1]);
+ 
+          if (text.includes("sync_front=1")) syncFrontActive = true;
+          if (text.includes("sync_front=0")) syncFrontActive = false;
+          if (text.includes("sync_back=1")) syncBackActive = true;
+          if (text.includes("sync_back=0")) syncBackActive = false;
+          if (text.includes("sync_all=1")) { syncAllActive = true; syncFrontActive = true; syncBackActive = true; }
+          if (text.includes("sync_all=0")) syncAllActive = false;
+          updateSyncUI();
+        } else if (text.startsWith("SENSOR:")) {
+          const kv = text.substring(7).split(',');
+          const data = {};
+          kv.forEach(pair => {
+            const parts = pair.split('=');
+            if (parts.length === 2) data[parts[0]] = parts[1];
+          });
+          
+          sensorEnabled = (data.en === '1');
+          const btn = document.getElementById('sensor-toggle-btn');
+          if (btn) {
+            btn.innerText = sensorEnabled ? "ENABLED" : "DISABLED";
+            btn.style.background = sensorEnabled ? "#10b981" : "#ef4444";
+          }
+          
+          const distEl = document.getElementById('sens-live-dist');
+          if (distEl) {
+            if (data.dist && data.dist !== "-1.0") {
+              const distVal = parseFloat(data.dist);
+              distEl.innerText = distVal.toFixed(1) + "cm";
+              distEl.style.color = (distVal < parseInt(data.th || 20)) ? "#ef4444" : "#10b981";
+            } else {
+              distEl.innerText = "--";
+              distEl.style.color = "rgba(255,255,255,0.4)";
+            }
+          }
+          
+          if (document.activeElement !== document.getElementById('sens-dist-slider')) {
+            const slider = document.getElementById('sens-dist-slider');
+            if (slider && data.th) {
+              slider.value = data.th;
+              const valEl = document.getElementById('sens-dist-val');
+              if (valEl) valEl.innerText = data.th + "cm";
+            }
+          }
+          
+          if (document.activeElement !== document.getElementById('sens-trip-act')) {
+            const el = document.getElementById('sens-trip-act');
+            if (el && data.trip) el.value = data.trip;
+          }
+          if (document.activeElement !== document.getElementById('sens-clear-act')) {
+            const el = document.getElementById('sens-clear-act');
+            if (el && data.clear) el.value = data.clear;
+          }
+          if (document.activeElement !== document.getElementById('sens-trip-aud')) {
+            const el = document.getElementById('sens-trip-aud');
+            if (el && data.atrip) el.value = data.atrip;
+          }
+          if (document.activeElement !== document.getElementById('sens-clear-aud')) {
+            const el = document.getElementById('sens-clear-aud');
+            if (el && data.aclear) el.value = data.aclear;
+          }
+        }
+      });
+    }
+
+    function toggleAutoRetract() {
+      autoRetractEnabled = !autoRetractEnabled;
+      updateRetractUI();
+      appendLog("System", `Gamepad Auto-Retract: ${autoRetractEnabled ? 'ENABLED' : 'DISABLED'}`);
+    }
+
+    function updateRetractUI() {
+      const btn = document.getElementById('btn-toggle-retract');
+      if (btn) {
+        if (autoRetractEnabled) {
+          btn.innerText = "Retract: ON";
+          btn.style.background = "#10b981";
+        } else {
+          btn.innerText = "Retract: OFF";
+          btn.style.background = "#475569";
+        }
+      }
+    }
+
+    function textToHexBytes(str) {
+      let hex = "";
+      for (let i = 0; i < str.length; i++) {
+        let h = str.charCodeAt(i).toString(16);
+        hex += (h.length === 1 ? "0" + h : h) + " ";
+      }
+      return hex.trim();
+    }
+
+    function textToBase64(str) {
+      try { return btoa(str); } catch (e) { return ""; }
+    }
+
+    function base64ToText(b64) {
+      try { return atob(b64); } catch (e) { return ""; }
+    }
+
+    function exportTerminalLogs() {
+      const header = `ROBOT DOG CONTROLLER LOG\nExported: ${new Date().toISOString()}\nBackend: ${bleBackend || 'None'}\n\n`;
+      const fullText = header + rawLogLines.join('\n');
+      const filename = `robot-controller-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+
+      if (navigator.share && navigator.canShare) {
+        try {
+          const file = new File([fullText], filename, { type: 'text/plain' });
+          if (navigator.canShare({ files: [file] })) {
+            navigator.share({ files: [file], title: "Robot Controller Log" }).catch(() => {});
+            return;
+          }
+        } catch (e) {}
+      }
+
+      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function getBleBackend() {
+      if (window.parent && window.parent.BluetoothLe) {
+        return { type: 'capacitor', ble: window.parent.BluetoothLe };
+      }
+      if (window.parent && window.parent.Capacitor && window.parent.Capacitor.Plugins && window.parent.Capacitor.Plugins.BluetoothLe) {
+        return { type: 'capacitor', ble: window.parent.Capacitor.Plugins.BluetoothLe };
+      }
+      if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothLe) {
+        return { type: 'capacitor', ble: window.Capacitor.Plugins.BluetoothLe };
+      }
+      if (navigator.bluetooth) {
+        return { type: 'web-bluetooth' };
+      }
+      return null;
+    }
+
+    function initBackendUI() {
+      const backend = getBleBackend();
+      const badge = document.getElementById('backend-badge');
+      if (!backend) {
+        badge.innerText = "No BLE";
+        return;
+      }
+      if (backend.type === 'capacitor') {
+        bleBackend = 'capacitor';
+        badge.innerText = "iOS BLE";
+        badge.style.color = "#6ee7b7";
+      } else {
+        bleBackend = 'web-bluetooth';
+        badge.innerText = "Web BLE";
+        badge.style.color = "#7dd3fc";
+      }
+    }
+
+    async function toggleConnection() {
+      if (isConnected) {
+        await disconnectDevice();
+      } else {
+        await connectDevice();
+      }
+    }
+
+    async function connectDevice() {
+      const backend = getBleBackend();
+      if (!backend) {
+        alert("Bluetooth is unavailable in this environment.");
+        return;
+      }
+
+      setUiState("Connecting...", "#f59e0b", "Connecting");
+      appendLog("BLE", "Opening BLE device picker...");
+
+      try {
+        if (backend.type === 'capacitor') {
+          const Ble = backend.ble;
+          await Ble.initialize();
+
+          const device = await Ble.requestDevice({ services: [UART_SERVICE_UUID] });
+          if (!device || !device.deviceId) throw new Error("No device selected.");
+
+          nativeDeviceId = device.deviceId;
+          appendLog("BLE", `Connecting to ${device.name || nativeDeviceId}...`);
+
+          try { if (Ble.stopLEScan) await Ble.stopLEScan(); } catch (e) {}
+
+          await Ble.connect({ deviceId: nativeDeviceId });
+          await new Promise(r => setTimeout(r, 600));
+
+          try {
+            await Ble.startNotifications({
+              deviceId: nativeDeviceId,
+              service: UART_SERVICE_UUID,
+              characteristic: UART_TX_CHAR_UUID
+            }, (result) => {
+              if (result && result.value) {
+                const incoming = base64ToText(result.value);
+                handleIncomingBleData(incoming);
+              }
+            });
+            appendLog("BLE", "Notifications active.");
+          } catch (notifErr) {}
+
+          onConnectedSuccess(device.name || "ESP32-Robot");
+
+        } else if (backend.type === 'web-bluetooth') {
+          webDevice = await navigator.bluetooth.requestDevice({
+            filters: [
+              { services: [UART_SERVICE_UUID] },
+              { namePrefix: "ESP" }
+            ],
+            optionalServices: [UART_SERVICE_UUID]
+          });
+
+          webDevice.addEventListener('gattserverdisconnected', onDisconnectedCleanup);
+          webServer = await webDevice.gatt.connect();
+
+          const service = await webServer.getPrimaryService(UART_SERVICE_UUID);
+          webTxChar = await service.getCharacteristic(UART_RX_CHAR_UUID);
+
+          try {
+            const rxNotifyChar = await service.getCharacteristic(UART_TX_CHAR_UUID);
+            await rxNotifyChar.startNotifications();
+            rxNotifyChar.addEventListener('characteristicvaluechanged', (e) => {
+              const decoder = new TextDecoder();
+              handleIncomingBleData(decoder.decode(e.target.value));
+            });
+          } catch (notifErr) {}
+
+          onConnectedSuccess(webDevice.name || "ESP32-Robot");
+        }
+      } catch (err) {
+        appendLog("Error", `Connection failed: ${err.message || err}`);
+        onDisconnectedCleanup();
+      }
+    }
+
+    async function disconnectDevice() {
+      const backend = getBleBackend();
+      try {
+        if (backend && backend.type === 'capacitor' && nativeDeviceId) {
+          await backend.ble.disconnect({ deviceId: nativeDeviceId });
+        } else if (webDevice && webDevice.gatt.connected) {
+          await webDevice.gatt.disconnect();
+        }
+      } catch (e) {}
+      onDisconnectedCleanup();
+    }
+
+    function onConnectedSuccess(name) {
+      isConnected = true;
+      document.getElementById('device-name').innerText = name;
+      setUiState("Connected", "#10b981", "Disconnect");
+      appendLog("BLE", `Connected to ${name}`);
+
+      setTimeout(() => {
+        sendCommand("status");
+        setTimeout(() => sendCommand("getswitchkeys"), 250);
+      }, 500);
+
+      // Distance and Status Poller
+      if (statusPollInterval) clearInterval(statusPollInterval);
+      statusPollInterval = setInterval(() => {
+        if (isConnected) sendCommand("status");
+      }, 1000);
+    }
+
+    function onDisconnectedCleanup() {
+      isConnected = false;
+      nativeDeviceId = null;
+      webDevice = null;
+      webServer = null;
+      webTxChar = null;
+      document.getElementById('device-name').innerText = "None Connected";
+      setUiState("Disconnected", "#f43f5e", "Connect BLE");
+      appendLog("BLE", "Device disconnected.");
+
+      if (statusPollInterval) {
+        clearInterval(statusPollInterval);
+        statusPollInterval = null;
+      }
+    }
+
+    async function sendCommand(commandText) {
+      if (!isConnected) {
+        appendLog("Notice", `(Offline) Action: '${commandText}' - Connect BLE to execute.`);
+        return;
+      }
+
+      if (isSending) return;
+      isSending = true;
+
+      const backend = getBleBackend();
+      const payload = commandText.endsWith("\n") ? commandText : (commandText + "\n");
+
+      try {
+        if (backend && backend.type === 'capacitor' && nativeDeviceId) {
+          const Ble = backend.ble;
+          const hexPayload = textToHexBytes(payload);
+          const b64Payload = textToBase64(payload);
+
+          try {
+            await Ble.writeWithoutResponse({
+              deviceId: nativeDeviceId,
+              service: UART_SERVICE_UUID,
+              characteristic: UART_RX_CHAR_UUID,
+              value: hexPayload
+            });
+          } catch (writeErr) {
+            await Ble.write({
+              deviceId: nativeDeviceId,
+              service: UART_SERVICE_UUID,
+              characteristic: UART_RX_CHAR_UUID,
+              value: b64Payload
+            });
+          }
+
+          if (commandText !== "status") appendLog("TX", commandText);
+
+        } else if (webTxChar) {
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(payload);
+
+          if (webTxChar.writeValueWithoutResponse) {
+            await webTxChar.writeValueWithoutResponse(bytes);
+          } else {
+            await webTxChar.writeValue(bytes);
+          }
+
+          if (commandText !== "status") appendLog("TX", commandText);
+        }
+      } catch (err) {
+        appendLog("Send Error", err.message || err);
+      } finally {
+        isSending = false;
+      }
+    }
+
+    function updateAngleDisplay(val) {
+      currentAngle = parseInt(val, 10);
+      document.getElementById('angle-val').innerText = `${currentAngle}°`;
+      document.getElementById('angle-slider').value = currentAngle;
+    }
+
+    function setAngle(val) {
+      let target = parseInt(val, 10);
+      if (target < 0) target = 0;
+      if (target > 180) target = 180;
+      updateAngleDisplay(target);
+      sendCommand(`angle ${target}`);
+    }
+
+    function onAngleSliderMove(val) {
+      updateAngleDisplay(val);
+      if (!isAngleThrottled) {
+        sendCommand(`angle ${val}`);
+        isAngleThrottled = true;
+        setTimeout(() => {
+          isAngleThrottled = false;
+          if (pendingAngle !== null) {
+            sendCommand(`angle ${pendingAngle}`);
+            pendingAngle = null;
+          }
+        }, 60);
+      } else {
+        pendingAngle = val;
+      }
+    }
+
+    function updateVolDisplay(val) {
+      currentVolumeNum = parseInt(val, 10);
+      document.getElementById('vol-val').innerText = `Vol: ${val}%`;
+      document.getElementById('vol-slider').value = val;
+    }
+
+    function onVolSliderMove(val) {
+      currentVolumeNum = parseInt(val, 10);
+      document.getElementById('vol-val').innerText = `Vol: ${val}%`;
+      if (!isVolThrottled) {
+        sendCommand(`vol ${val}`);
+        isVolThrottled = true;
+        setTimeout(() => {
+          isVolThrottled = false;
+          if (pendingVol !== null) {
+            sendCommand(`vol ${pendingVol}`);
+            pendingVol = null;
+          }
+        }, 80);
+      } else {
+        pendingVol = val;
+      }
+    }
+
+    function handleSendCustom(e) {
+      e.preventDefault();
+      const input = document.getElementById('cmd-input');
+      const val = input.value.trim();
+      if (!val) return;
+      sendCommand(val);
+      input.value = '';
+    }
+
+    function setUiState(statusText, dotColor, btnText) {
+      document.getElementById('status-text').innerText = statusText;
+      const dot = document.getElementById('status-dot');
+      dot.style.background = dotColor;
+      dot.style.boxShadow = `0 0 6px ${dotColor}`;
+      const btn = document.getElementById('connect-btn');
+      btn.querySelector('span').innerText = btnText;
+    }
+
+    function appendLog(sender, text) {
+      const term = document.getElementById('terminal');
+      const time = new Date().toLocaleTimeString().split(' ')[0];
+      const entry = `[${time}] ${sender}: ${text}`;
+      rawLogLines.push(entry);
+      if (rawLogLines.length > 250) rawLogLines.shift();
+
+      const div = document.createElement('div');
+      let senderColor = "#38bdf8";
+      if (sender === "ESP32") senderColor = "#34d399";
+      if (sender === "Switch") senderColor = "#c084fc";
+      if (sender === "Sync") senderColor = "#f472b6";
+      if (sender === "Error" || sender === "Send Error") senderColor = "#f87171";
+      if (sender === "TX") senderColor = "#fbbf24";
+
+      div.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[${time}]</span> <span style="color:${senderColor}; font-weight:600;">${sender}:</span> <span>${escapeHtml(text)}</span>`;
+      term.appendChild(div);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearLogs() {
+      rawLogLines = [];
+      document.getElementById('terminal').innerHTML = '<div style="color:rgba(255,255,255,0.4); font-style:italic;">Logs cleared.</div>';
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // GAMEPAD EVENT LOOP (FOR BLUETOOTH SWITCH CONTROLLERS)
+    let lastBtnStates = {};
+
+    window.addEventListener("gamepadconnected", (e) => {
+      appendLog("Switch", `Physical Controller connected: ${e.gamepad.id}`);
+      const badge = document.getElementById('gp-badge');
+      badge.innerText = "BT Gamepad Connected";
+      badge.style.color = "#34d399";
+    });
+
+    window.addEventListener("gamepaddisconnected", () => {
+      appendLog("Switch", "Physical Controller disconnected.");
+      const badge = document.getElementById('gp-badge');
+      badge.innerText = "No BT Gamepad";
+      badge.style.color = "rgba(255,255,255,0.5)";
+    });
+
+    function pollGamepadThrottled() {
+      setTimeout(pollGamepadThrottled, 30);
+
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      let gp = null;
+
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) { gp = gamepads[i]; break; }
+      }
+
+      if (!gp) return;
+
+      // 1. Process Physical Buttons
+      gp.buttons.forEach((btn, idx) => {
+        const isPressed = btn.pressed;
+        const btnCard = document.getElementById(`gp-btn-${idx}`);
+ 
+        if (btnCard && !isRemapMode) {
+          if (isPressed) btnCard.classList.add('pressed');
+          else btnCard.classList.remove('pressed');
+        }
+
+        if (isPressed && !lastBtnStates[idx]) {
+          handleButtonPress(idx);
+        }
+
+        lastBtnStates[idx] = isPressed;
+      });
+
+      // 2. Process Left Joystick
+      if (gp.axes.length > 0) {
+        const leftX = gp.axes[0] || 0;
+        const leftY = (gp.axes.length > 1) ? gp.axes[1] : 0;
+        updateAxisUI(0, leftX);
+
+        const deadzone = 0.25;
+
+        if (leftY < -deadzone) {
+          wasJoystickActive = true;
+          sendCommand('forward');
+        } else if (leftY > deadzone) {
+          wasJoystickActive = true;
+          sendCommand('backward');
+        } else if (leftX < -deadzone) {
+          wasJoystickActive = true;
+          sendCommand('left_wave');
+        } else if (leftX > deadzone) {
+          wasJoystickActive = true;
+          sendCommand('right_wave');
+        } else {
+          if (wasJoystickActive) {
+            wasJoystickActive = false;
+            if (autoRetractEnabled) {
+              sendCommand('stop');
+            }
+          }
+        }
+      }
+
+      if (gp.axes.length > 2) {
+        updateAxisUI(2, gp.axes[2]);
+      }
+    }
+
+    function updateAxisUI(axisIdx, val) {
+      const bar = document.getElementById(`axis-bar-${axisIdx}`);
+      const txt = document.getElementById(`axis-val-${axisIdx}`);
+      if (!bar || !txt) return;
+
+      txt.innerText = val.toFixed(2);
+      let fillLeft = '50%';
+      let fillWidth = '0%';
+      if (val > 0) {
+        fillLeft = '50%';
+        fillWidth = (val * 50) + '%';
+      } else if (val < 0) {
+        fillLeft = (50 + (val * 50)) + '%';
+        fillWidth = (Math.abs(val) * 50) + '%';
+      }
+      bar.style.left = fillLeft;
+      bar.style.width = fillWidth;
+    }
+
+    // DISPATCH CUSTOM REPROGRAMMED BUTTON COMMAND
+    function handleButtonPress(btnIndex) {
+      const cmd = switchKeyMap[btnIndex] || DEFAULT_SWITCH_MAP[btnIndex];
+      if (!cmd) return;
+
+      appendLog("Trigger", `Button ${SWITCH_BUTTON_NAMES[btnIndex] || btnIndex} -> '${cmd}'`);
+
+      if (cmd.startsWith("vol ")) {
+        const delta = parseInt(cmd.substring(4), 10);
+        let nextV = currentVolumeNum + delta;
+        if (nextV < 0) nextV = 0;
+        if (nextV > 100) nextV = 100;
+        updateVolDisplay(nextV);
+        sendCommand(`vol ${nextV}`);
+      } else if (cmd.startsWith("angle ") || (!isNaN(cmd) && cmd.trim() !== "")) {
+        const ang = parseInt(cmd.replace("angle ", ""), 10);
+        updateAngleDisplay(ang);
+        sendCommand(`angle ${ang}`);
+      } else {
+        sendCommand(cmd);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initBackendUI();
+      initSwitchButtonMap();
+      pollGamepadThrottled();
+    });
+  </script>
+</body>
+</html>

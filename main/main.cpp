@@ -38,12 +38,10 @@
 #include "ble_manager.h"
 #include "audio_player.h"
 
-extern void web_server_init();
-
 static const char *TAG = "MAIN";
 
-bool is_claw_mode = false; 
-bool is_cam_mode = false; 
+bool is_claw_mode = false;
+bool is_cam_mode = false;
 
 // NON-BLOCKING console task: Works seamlessly on battery without USB host connection
 static void console_read_task(void *pvParameter) {
@@ -59,7 +57,7 @@ static void console_read_task(void *pvParameter) {
     char cmd[128];
     int cmd_idx = 0;
     static bool repl_sync = false;
-    
+ 
     while (1) {
         if (!usb_serial_jtag_is_connected()) {
             cmd_idx = 0;
@@ -69,15 +67,15 @@ static void console_read_task(void *pvParameter) {
 
         uint8_t c = 0;
         int len = usb_serial_jtag_read_bytes(&c, 1, 0);
-        
+ 
         if (len > 0) {
-            if (c == 0x03) { 
+            if (c == 0x03) {
                 if (is_claw_mode) claw_execute_command("stop");
                 else if (!is_cam_mode) servo_set_action("stop");
             } else if (c == '\r' || c == '\n') {
                 if (cmd_idx > 0) {
                     cmd[cmd_idx] = '\0';
-                    
+ 
                     if (strcmp(cmd, "log") == 0 || strcmp(cmd, "logs") == 0 || strcmp(cmd, "cat log") == 0) {
                         logger_print_all();
                     } else if (strcmp(cmd, "log tail") == 0) {
@@ -162,13 +160,13 @@ static void console_read_task(void *pvParameter) {
                         } else if (strcmp(cmd, "half") == 0) {
                             claw_execute_command("half_open");
                         } else {
-                            claw_execute_command(cmd); 
+                            claw_execute_command(cmd);
                         }
                     } else if (!is_cam_mode) {
                         int ang = 0;
                         if (strcmp(cmd, "sit") == 0 || strcmp(cmd, "stand") == 0 || strcmp(cmd, "forward") == 0 ||
                             strcmp(cmd, "backward") == 0 || strcmp(cmd, "step_forward") == 0 || strcmp(cmd, "step_backward") == 0 ||
-                            strcmp(cmd, "stop") == 0 || strcmp(cmd, "crawl") == 0 || strcmp(cmd, "left_wave") == 0 || 
+                            strcmp(cmd, "stop") == 0 || strcmp(cmd, "crawl") == 0 || strcmp(cmd, "left_wave") == 0 ||
                             strcmp(cmd, "right_wave") == 0 || strcmp(cmd, "back_left_wave") == 0 || strcmp(cmd, "back_right_wave") == 0 ||
                             strcmp(cmd, "stretch_down") == 0 || strcmp(cmd, "stretch_back") == 0 || strcmp(cmd, "leap_forward") == 0) {
                             servo_set_action(cmd);
@@ -236,8 +234,8 @@ extern "C" void app_main(void) {
     // 3. Initialize Flash File Logger
     logger_init();
 
-    esp_log_level_set("wifi", ESP_LOG_ERROR);    
-    esp_log_level_set("cam_hal", ESP_LOG_NONE);  
+    esp_log_level_set("wifi", ESP_LOG_ERROR);
+    esp_log_level_set("cam_hal", ESP_LOG_NONE);
 
     // 4. Setup Base Network Event Loop
     ESP_ERROR_CHECK(esp_netif_init());
@@ -251,14 +249,14 @@ extern "C" void app_main(void) {
         nvs_get_str(my_handle, "dev_mode", dev_mode, &len);
         nvs_close(my_handle);
     }
-    
+ 
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
     // 6. Initialize Wi-Fi and Web Server
     ESP_LOGI(TAG, "Starting Wi-Fi and Web Server...");
     wifi_manager_init();
-    web_server_init();
+    web_server_start(); // Refactored to unified start API
 
     // 7. Initialize Bluetooth Low Energy Engine (Nordic UART Service)
     ESP_LOGI(TAG, "Starting Bluetooth LE Subsystem for iPhone app connection...");
@@ -268,15 +266,15 @@ extern "C" void app_main(void) {
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
-        cam_controller_init(); 
+        cam_controller_init();
     } else if (is_cam_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CAM");
         cam_controller_init();
         cam_espnow_init();
     } else {
         ESP_LOGI(TAG, "Booting Device Profile: ROBOT");
-        cam_controller_init(); 
-        audio_player_init(); 
+        cam_controller_init();
+        audio_player_init();
         sensor_monitor_init();
         servo_controller_init();
     }

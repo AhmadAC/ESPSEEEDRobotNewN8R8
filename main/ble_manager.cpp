@@ -12,6 +12,8 @@
 #include "audio_player.h"
 #include "sensor_monitor.h"
 #include "wifi_manager.h"
+#include "web_server.h" // Added dynamic Web Server linkage
+#include "esp_wifi.h"   // Included to verify AP client count
 #include "cJSON.h"
 #include "nvs.h"
 #include <string.h>
@@ -94,6 +96,16 @@ static void send_full_status(void) {
              audio_get_volume(), bclk, lrc, din,
              ll, hr, hl, lr);
     ble_manager_send_notify(status_str);
+
+    vTaskDelay(pdMS_TO_TICKS(30)); // Delay prevents BLE notification congestion 
+
+    char sens_str[160];
+    snprintf(sens_str, sizeof(sens_str),
+             "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
+             sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
+             sensor_get_tripped_action(), sensor_get_cleared_action(),
+             sensor_get_tripped_audio(), sensor_get_cleared_audio());
+    ble_manager_send_notify(sens_str);
 }
 
 static void process_ble_command(const char* raw_cmd) {
@@ -275,7 +287,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 6. JSON Object Parser
+    // 6. JSON Object Parser (Handles App Action, Servo, and Sensor settings)
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -294,6 +306,21 @@ static void process_ble_command(const char* raw_cmd) {
         cJSON *claw_ang = cJSON_GetObjectItem(json, "claw_angle");
         if (!claw_ang) claw_ang = cJSON_GetObjectItem(json, "angle");
         if (claw_ang) claw_set_angle(claw_ang->valueint);
+
+        // Parse Ultrasonic Sensor Settings coming from the Frontend App
+        cJSON *sen_en = cJSON_GetObjectItem(json, "sensor_enabled");
+        if (sen_en) sensor_set_enabled(cJSON_IsTrue(sen_en) || sen_en->valueint != 0);
+
+        cJSON *sen_th = cJSON_GetObjectItem(json, "sensor_threshold");
+        if (sen_th) sensor_set_threshold(sen_th->valueint);
+
+        cJSON *sen_trip = cJSON_GetObjectItem(json, "sensor_tripped_action");
+        cJSON *sen_clear = cJSON_GetObjectItem(json, "sensor_cleared_action");
+        if (sen_trip && sen_clear) sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
+
+        cJSON *sen_atrip = cJSON_GetObjectItem(json, "sensor_tripped_audio");
+        cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
+        if (sen_atrip && sen_aclear) sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
 
         cJSON_Delete(json);
         ble_manager_send_notify(">> JSON Handled\n");
@@ -383,6 +410,15 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
                 active_conn_handle = event->connect.conn_handle;
                 is_ble_connected_flag = true;
                 ESP_LOGI(TAG, "BLE Client Connected! Connection Handle: %d", active_conn_handle);
+                
+                // Stop the local Web Server entirely to conserve battery/RAM 
+                // UNLESS a user device is physically connected to the ESP32's SoftAP.
+                wifi_sta_list_t clients;
+                if (esp_wifi_ap_get_sta_list(&clients) == ESP_OK && clients.num == 0) {
+                    ESP_LOGI(TAG, "No users on SoftAP. Stopping Web Server to save energy.");
+                    web_server_stop();
+                }
+
                 send_full_status();
             } else {
                 active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -396,6 +432,9 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             is_ble_connected_flag = false;
             ble_advertise();
+            
+            ESP_LOGI(TAG, "Restoring Web Server fallback UI after BLE disconnect.");
+            web_server_start();
             break;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
