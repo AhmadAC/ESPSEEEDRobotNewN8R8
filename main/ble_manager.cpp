@@ -1,6 +1,9 @@
 // 11-3ESPSEEEDRobotNewN8R8/main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -46,6 +49,11 @@ static char current_ip[32] = "192.168.4.1";
 static bool ble_sync_front = false;
 static bool ble_sync_back = false;
 static bool ble_sync_all = false;
+
+// Command queue to keep heavy operations off the nimble_host task stack
+#define BLE_CMD_QUEUE_LEN 16
+#define BLE_CMD_MAX_LEN 128
+static QueueHandle_t s_ble_cmd_queue = NULL;
 
 static const char *DEFAULT_SWITCH_COMMANDS[16] = {
     "stop", "stand", "sit", "bark",
@@ -98,35 +106,35 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    // Embed live distance and sensor state directly in the STATUS frame
-    char status_str[220];
-    snprintf(status_str, sizeof(status_str),
-             "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d,dist=%.1f,sen=%d,th=%d\n",
-             is_claw_mode ? claw_current_angle : ll,
-             audio_get_volume(), bclk, lrc, din,
-             ll, hr, hl, lr, oll, ohr, ohl, olr,
-             (double)sensor_get_distance(), sensor_is_enabled() ? 1 : 0, (int)sensor_get_threshold());
-    ble_manager_send_notify(status_str);
+    // Allocate on heap to guarantee stack safety
+    char *status_str = (char*)malloc(256);
+    if (status_str) {
+        snprintf(status_str, 256,
+                 "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d,dist=%.1f,sen=%d,th=%d\n",
+                 is_claw_mode ? claw_current_angle : ll,
+                 audio_get_volume(), bclk, lrc, din,
+                 ll, hr, hl, lr, oll, ohr, ohl, olr,
+                 (double)sensor_get_distance(), sensor_is_enabled() ? 1 : 0, (int)sensor_get_threshold());
+        ble_manager_send_notify(status_str);
+        free(status_str);
+    }
 
-    // Provide the detailed SENSOR frame with actions and audio hooks
-    char sens_str[180];
-    snprintf(sens_str, sizeof(sens_str),
-             "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
-             sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
-             sensor_get_tripped_action(), sensor_get_cleared_action(),
-             sensor_get_tripped_audio(), sensor_get_cleared_audio());
-    ble_manager_send_notify(sens_str);
+    char *sens_str = (char*)malloc(192);
+    if (sens_str) {
+        snprintf(sens_str, 192,
+                 "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
+                 sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
+                 sensor_get_tripped_action(), sensor_get_cleared_action(),
+                 sensor_get_tripped_audio(), sensor_get_cleared_audio());
+        ble_manager_send_notify(sens_str);
+        free(sens_str);
+    }
 }
 
-static void process_ble_command(const char* raw_cmd) {
-    if (!raw_cmd) return;
+static void execute_ble_command(const char* p) {
+    if (!p || *p == '\0') return;
 
-    // Trim leading whitespace
-    const char* p = raw_cmd;
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p == '\0') return;
-
-    ESP_LOGI(TAG, "BLE Command Received: '%s'", p);
+    ESP_LOGI(TAG, "BLE Executing: '%s'", p);
 
     if (strncmp(p, "wifi:", 5) == 0 || strncmp(p, "w:", 2) == 0) {
         const char* creds = (strncmp(p, "wifi:", 5) == 0) ? (p + 5) : (p + 2);
@@ -273,7 +281,7 @@ static void process_ble_command(const char* raw_cmd) {
     int c_ll = 0, c_hr = 0, c_hl = 0, c_lr = 0;
     if (sscanf(p, "cal_set offsets %d %d %d %d", &c_ll, &c_hr, &c_hl, &c_lr) == 4) {
         servo_set_calibration("offsets", c_ll, c_hr, c_hl, c_lr, true);
-        servo_set_action_bypass("stand"); // Reset joints to 90 deg stand pose
+        servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Offsets Saved to Flash (Reset to 90 deg Stand Pose)\n");
         send_full_status();
         return;
@@ -343,7 +351,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // Switch Matrix Remapper Handlers
+    // Switch Remapper Handlers
     if (strncmp(p, "switchkey ", 10) == 0) {
         const char *arg = p + 10;
         while (*arg == ' ') arg++;
@@ -410,12 +418,12 @@ static void process_ble_command(const char* raw_cmd) {
     }
 
     // Audio & Speaker Triggers
-    if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0) {
+    if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0 || strcmp(p, "dog_bark") == 0) {
         audio_play("dog_bark");
         ble_manager_send_notify(">> Playing Dog Bark\n");
         return;
     }
-    if (strcmp(p, "beep") == 0 || strcmp(p, "test") == 0) {
+    if (strcmp(p, "beep") == 0 || strcmp(p, "test") == 0 || strcmp(p, "test_beep") == 0) {
         audio_play_test_beep();
         ble_manager_send_notify(">> Playing Test Beep\n");
         return;
@@ -489,7 +497,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // JSON Command Stream
+    // JSON Handling
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -553,11 +561,20 @@ static void process_ble_command(const char* raw_cmd) {
     ble_manager_send_notify(reply);
 }
 
+static void ble_cmd_worker_task(void *pvParameters) {
+    char cmd_buf[BLE_CMD_MAX_LEN];
+    while (1) {
+        if (xQueueReceive(s_ble_cmd_queue, cmd_buf, portMAX_DELAY) == pdTRUE) {
+            execute_ble_command(cmd_buf);
+        }
+    }
+}
+
 static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        char buf[512];
+        char buf[BLE_CMD_MAX_LEN];
         if (om_len >= sizeof(buf)) {
             om_len = sizeof(buf) - 1;
         }
@@ -569,7 +586,11 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
                 buf[--om_len] = '\0';
             }
             if (om_len > 0) {
-                process_ble_command(buf);
+                char *p = buf;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p != '\0' && s_ble_cmd_queue != NULL) {
+                    xQueueSend(s_ble_cmd_queue, p, 0);
+                }
             }
         }
     }
@@ -649,7 +670,10 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             ESP_LOGI(TAG, "BLE Client Subscribed to Notifications");
             is_subscribed_flag = (event->subscribe.cur_notify != 0);
             if (is_subscribed_flag) {
-                send_full_status();
+                const char *trigger_status = "status";
+                if (s_ble_cmd_queue != NULL) {
+                    xQueueSend(s_ble_cmd_queue, trigger_status, 0);
+                }
             }
             break;
 
@@ -715,6 +739,11 @@ static void ble_on_reset(int reason) {
 }
 
 void ble_manager_init(void) {
+    if (s_ble_cmd_queue == NULL) {
+        s_ble_cmd_queue = xQueueCreate(BLE_CMD_QUEUE_LEN, BLE_CMD_MAX_LEN);
+        xTaskCreatePinnedToCore(ble_cmd_worker_task, "ble_worker", 8192, NULL, 5, NULL, 1);
+    }
+
     nimble_port_init();
 
     ble_hs_cfg.reset_cb = ble_on_reset;
@@ -743,5 +772,5 @@ void ble_manager_init(void) {
     }
 
     nimble_port_freertos_init(ble_host_task);
-    ESP_LOGI(TAG, "BLE Manager Initialized with Nordic UART Service.");
+    ESP_LOGI(TAG, "BLE Manager Initialized with dedicated worker thread (8KB stack).");
 }

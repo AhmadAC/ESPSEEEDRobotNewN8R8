@@ -9,9 +9,10 @@ CONFIG_ESP_BROWNOUT_DET=n
 # Double FreeRTOS Timer service stack size to prevent stack overflow
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 
-# Enable NimBLE Bluetooth Engine
+# Enable NimBLE Bluetooth Engine & Increase Host Stack Size
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
 
 # Custom Partition Table
 CONFIG_PARTITION_TABLE_CUSTOM=y

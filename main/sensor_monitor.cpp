@@ -15,14 +15,14 @@ static const char *TAG = "SENSOR";
 #define ULTRASONIC_TRIG_PIN GPIO_NUM_5 // D4
 #define ULTRASONIC_ECHO_PIN GPIO_NUM_6 // D5
 
-// MUST be false on boot: Sensor stays completely dormant until user enables it
+// Autonomous safety lock flag
 static bool sensor_enabled = false; 
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
 static int32_t reaction_delay = 0;
 static float current_distance = -1.0f; 
 
-// Dynamic response buffers - default to "none" so no unexpected motions trigger
+// Dynamic response buffers
 static char tripped_action[16] = "none";
 static char cleared_action[16] = "none";
 static char tripped_audio[16] = "none";
@@ -91,20 +91,18 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int consecutive_detections = 0;
 
     while (1) {
-        // HARD DISABLE: If not explicitly enabled by user, stay 100% idle
-        if (!sensor_enabled) {
-            safety_lock_engaged = false;
-            last_lock_state = false;
-            current_distance = -1.0f;
-            consecutive_detections = 0;
-            vTaskDelay(pdMS_TO_TICKS(500));
-            continue;
-        }
-
         float dist = read_ultrasonic_distance();
         current_distance = dist;
 
-        // Glitch rejection: Require 2 consecutive positive readings to trigger lock
+        if (!sensor_enabled) {
+            safety_lock_engaged = false;
+            last_lock_state = false;
+            consecutive_detections = 0;
+            vTaskDelay(pdMS_TO_TICKS(150));
+            continue;
+        }
+
+        // Glitch rejection: Require 2 consecutive positive readings to engage safety lock
         if (dist > 0.0f && dist < (float)distance_threshold) {
             consecutive_detections++;
             if (consecutive_detections >= 2) {
@@ -141,9 +139,8 @@ static void ultrasonic_safety_task(void *pvParameter) {
 
 void sensor_monitor_init() {
     load_sensor_nvs();
-    sensor_enabled = false; // Always force disabled on boot
+    sensor_enabled = false;
 
-    // Direct GPIO configuration avoiding gpio_reset_pin pull-up conflicts
     gpio_config_t trig_io = {};
     trig_io.intr_type = GPIO_INTR_DISABLE;
     trig_io.mode = GPIO_MODE_OUTPUT;
@@ -162,7 +159,7 @@ void sensor_monitor_init() {
     gpio_config(&echo_io);
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%d, Echo=GPIO%d (DISABLED by default)",
+    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%d, Echo=GPIO%d",
              ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN);
 }
 
@@ -172,9 +169,8 @@ void sensor_set_enabled(bool enabled) {
     sensor_enabled = enabled; 
     if (!enabled) {
         safety_lock_engaged = false;
-        current_distance = -1.0f;
     }
-    ESP_LOGI(TAG, "Ultrasonic sensor %s", enabled ? "ENABLED" : "DISABLED");
+    ESP_LOGI(TAG, "Ultrasonic safety lock %s", enabled ? "ENABLED" : "DISABLED");
 }
 
 int32_t sensor_get_threshold() { return distance_threshold; }
