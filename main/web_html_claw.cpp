@@ -1,257 +1,96 @@
-// main\web_html_claw.cpp
+// main/web_html_claw.cpp
 #include "web_html.h"
 
 // -------------------------------------------------------------
 // DYNAMIC CLAW HTML PAYLOADS
 // -------------------------------------------------------------
-const char HTML_CLAW_UI[] = R"raw_html(
-<!DOCTYPE html><html><head><meta charset="utf-8"><title>Claw Controller</title><meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-    :root { --primary: #0ea5e9; --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; }
-    body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 15px; display: flex; flex-direction: column; align-items: center; margin:0; }
-    .container { width: 100%; max-width: 500px; }
-    .card { background: var(--card); padding: 25px; border-radius: 20px; border: 1px solid #334155; text-align: center; margin-bottom: 20px; }
-    h2 { color: var(--primary); margin-top: 0; }
-    input[type=password], select { width: 100%; padding: 12px; margin: 8px 0 20px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: white; box-sizing: border-box; }
-    input[type=range] { width: 100%; margin: 15px 0; accent-color: #0ea5e9; }
-    button { width: 100%; padding: 15px; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; color: white; margin-top:10px; transition: transform 0.1s; }
-    button:active { transform: scale(0.96); opacity: 0.9; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .btn-green { background: #10b981; }
-    .btn-red { background: #ef4444; }
-    .btn-blue { background: #3b82f6; }
-    .btn-purple { background: #8b5cf6; }
-    .btn-gray { background: #475569; }
-    .btn-orange { background: #f59e0b; }
-    .status-bar { padding: 12px; border-radius: 10px; font-weight: bold; text-align: center; font-size: 0.85rem; border: 1px solid; text-transform: uppercase; background: #172554; color: #93c5fd; border-color: #3b82f6; margin-bottom:15px; }
-    .text-sm { font-size: 0.85rem; color: #94a3b8; margin-bottom:10px; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-</style>
+const char HTML_CLAW_UI[] = R"raw_html(<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ESP32 Claw Controller</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <style>
+        :root { --primary: #0ea5e9; --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 15px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { text-align: center; color: var(--primary); margin-bottom: 25px; }
+        .card { background: var(--card); border-radius: 16px; padding: 25px; border: 1px solid #334155; margin-bottom: 25px; box-sizing: border-box; }
+        h2 { border-bottom: 1px solid #334155; padding-bottom: 10px; color: var(--primary); margin-top: 0; margin-bottom: 15px; }
+        .grid { display: grid; grid-template-columns: 1fr; gap: 15px; }
+        @media (min-width: 500px) { .grid { grid-template-columns: 1fr 1fr; } }
+        button { background: #3b82f6; color: white; border: none; padding: 14px 15px; border-radius: 10px; cursor: pointer; font-size: 15px; width: 100%; font-weight: bold; transition: opacity 0.2s, transform 0.1s; }
+        button:hover { opacity: 0.9; }
+        button:active { transform: scale(0.96); }
+        .btn-green { background: #10b981; }
+        .btn-red { background: #ef4444; }
+        .btn-orange { background: #f59e0b; }
+        .btn-gray { background: #475569; }
+        input[type=range] { width: 100%; margin: 15px 0; accent-color: var(--primary); }
+        .status-box { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center; font-weight: bold; }
+        .angle-val { font-size: 1.5rem; color: var(--primary); }
+        .status-bar { padding: 12px; border-radius: 10px; font-weight: bold; text-align: center; font-size: 0.85rem; border: 1px solid; text-transform: uppercase; background: #172554; color: #93c5fd; border-color: #3b82f6; margin-bottom: 20px; }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <div class="status-bar">CLAW DASHBOARD</div>
-
-        <div class="card">
-            <h2>Control Claw</h2>
-            <div class="text-sm"><b>State:</b> <span id="lastcmd" style="color:#3b82f6;">Loading...</span> | <b>Angle:</b> <span id="curangle" style="color:#10b981;">--</span>°</div>
-            
-            <input type="range" id="angleSlider" min="0" max="138" value="90" oninput="updateAngleLabel(this.value)" onchange="setAngle(this.value)">
-            <div class="text-sm" style="margin-bottom: 20px;">Target Slider: <span id="sliderVal">90</span>°</div>
-
-            <div class="grid-2">
-                <button class="btn-green" onclick="c('open')">Open (138°)</button>
-                <button class="btn-red" onclick="c('close')">Close (0°)</button>
-                <button class="btn-blue" onclick="c('half_open')">Half Open</button>
-                <button class="btn-purple" onclick="c('half_close')">Half Close</button>
-            </div>
-            
-            <hr style="border-color:#334155; margin: 15px 0;">
-            <div class="text-sm">PyController Gamepad Setup</div>
-            <button class="btn-purple" onclick="pairESPNOW()">Connect to PyController</button>
-            
-            <p id="cstat" class="text-sm" style="margin-top:15px;"></p>
+<div class='container'>
+    <div class="status-bar">ESP32-S3 Robotic Claw Controller</div>
+    <div class='card'>
+        <h2>Claw Gripper Control</h2>
+        <div class='status-box'>
+            <div>Current Angle: <span class='angle-val' id='val_angle'>90&deg;</span></div>
+            <div style="font-size:0.85rem; color:#94a3b8; margin-top:5px;">Last Command: <span id='last_cmd' style="color:#f1f5f9;">--</span></div>
         </div>
-        
-        <div class="card" id="camCard">
-            <h2>Live Camera</h2>
-            <div class="stream-container" id="streamContainer" style="display:none; width: 100%; border-radius: 8px; overflow: hidden; background-color: #000; margin-bottom: 15px; min-height: 200px; position: relative; flex-direction: column; align-items: center; justify-content: center;">
-                <img id="streamImg" alt="Live Stream" style="display: block; width: 100%; height: auto; transition: transform 0.2s;">
-            </div>
-            <div id="camControls" style="display:none; margin-bottom: 15px;">
-                <div class="grid-2">
-                    <button id="snapBtn" class="btn-green" onclick="takeSnapshot()">Save HD Picture</button>
-                    <button class="btn-orange" onclick="rotateCamera()">Rotate 90&deg;</button>
-                </div>
-                <div id="camStatus" class="text-sm" style="margin-top: 10px;">Streaming live...</div>
-            </div>
-            <button id="camToggleBtn" class="btn-blue" onclick="toggleCamera()">Turn Camera ON</button>
+        <input type='range' id='claw_slider' min='0' max='138' value='90' oninput='updateSlider(this.value)'>
+        <div class='grid' style='margin-bottom:15px;'>
+            <button class='btn-green' onclick='sendCmd("open")'>Fully Open (138&deg;)</button>
+            <button class='btn-red' onclick='sendCmd("close")'>Fully Close (0&deg;)</button>
+            <button class='btn-orange' onclick='sendCmd("half_open")'>Half Open (100&deg;)</button>
+            <button class='btn-orange' onclick='sendCmd("half_close")'>Half Close (45&deg;)</button>
         </div>
-
-        <div class="card">
-            <h2>Wi-Fi Settings</h2>
-            <div id="status" class="text-sm">Ready to Scan</div>
-            <button class="btn-gray" onclick="scan()">Scan Networks</button>
-            
-            <select id="ssid" style="margin-top:15px;"><option value="">-- Select --</option></select>
-            <input type="password" id="pass" placeholder="Password">
-            
-            <button class="btn-green" onclick="save()">Save and Connect</button>
-            
-            <hr style="border-color:#334155; margin: 25px 0;">
-            <div class="text-sm">Quick Boot Mode Switch</div>
-            <div class="grid-2">
-                <button style="background:#f59e0b;" onclick="forceAP()">Force AP</button>
-                <button style="background:#10b981;" onclick="forceWiFi()">Use Wi-Fi</button>
-            </div>
-            
-            <hr style="border-color:#334155; margin: 25px 0;">
-            <div class="text-sm">Hardware Profile (Reboot Required)</div>
-            <div class="grid-2">
-                <button class="btn-purple" disabled>✓ Claw Mode</button>
-                <button class="btn-gray" onclick="setMode('robot')">Robot Mode</button>
-                <button class="btn-gray" onclick="setMode('cam')">Camera Mode</button>
-            </div>
+        <button class='btn-gray' onclick='sendCmd("stop")'>Relax Servo (0 Amps)</button>
+    </div>
+    <div class='card'>
+        <h2>Hardware Profile Switch</h2>
+        <div class='grid'>
+            <button class='btn-gray' onclick='setMode("robot")'>Robot Mode</button>
+            <button class='btn-gray' onclick='setMode("cam")'>Camera Mode</button>
         </div>
     </div>
-
-    <script>
-        function c(cmd){
-            document.getElementById('cstat').innerText = 'Sending Preset...';
-            fetch('/claw?cmd='+cmd).then(r=>r.text()).then(t=>{
-                document.getElementById('cstat').innerText = 'Status: ' + t;
-                setTimeout(loadStatus, 600);
-            });
+</div>
+<script>
+    function sendCmd(cmd) {
+        fetch('/claw?cmd=' + encodeURIComponent(cmd))
+            .then(r => r.text())
+            .then(() => fetchStatus());
+    }
+    function updateSlider(val) {
+        document.getElementById('val_angle').innerHTML = val + '&deg;';
+        fetch('/claw?angle=' + encodeURIComponent(val));
+    }
+    function fetchStatus() {
+        fetch('/status')
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('last_cmd').innerText = d.last_cmd;
+                document.getElementById('val_angle').innerHTML = d.angle + '&deg;';
+                document.getElementById('claw_slider').value = d.angle;
+            }).catch(() => {});
+    }
+    function setMode(m) {
+        if(confirm("Switch to " + m.toUpperCase() + " profile and reboot?")) {
+            fetch('/switch_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: m })
+            }).then(() => alert('Rebooting...'));
         }
-        function setAngle(val){
-            document.getElementById('cstat').innerText = 'Setting Angle...';
-            fetch('/claw?angle='+val).then(r=>r.text()).then(t=>{
-                document.getElementById('cstat').innerText = 'Status: ' + t;
-                setTimeout(loadStatus, 600);
-            });
-        }
-        function updateAngleLabel(val){ document.getElementById('sliderVal').innerText = val; }
-        
-        function pairESPNOW() {
-            document.getElementById('cstat').innerText = 'Pairing with PyController...';
-            fetch('/espnow_pair', {method: 'POST'}).then(r=>r.text()).then(t=>{
-                document.getElementById('cstat').innerText = 'Status: ' + t;
-                setTimeout(loadStatus, 600);
-            });
-        }
-
-        let camActive = false;
-        let camRotation = 0;
-        
-        function rotateCamera() {
-            camRotation = (camRotation + 90) % 360;
-            const img = document.getElementById('streamImg');
-            if (camRotation % 180 !== 0) {
-                img.style.transform = `rotate(${camRotation}deg) scale(0.75)`;
-            } else {
-                img.style.transform = `rotate(${camRotation}deg) scale(1)`;
-            }
-        }
-        
-        function toggleCamera() {
-            camActive = !camActive;
-            const container = document.getElementById('streamContainer');
-            const img = document.getElementById('streamImg');
-            const btn = document.getElementById('camToggleBtn');
-            const ctrl = document.getElementById('camControls');
-            if (camActive) {
-                img.src = 'http://' + window.location.hostname + ':81/';
-                container.style.display = 'flex';
-                ctrl.style.display = 'block';
-                btn.innerText = 'Turn Camera OFF';
-                btn.className = 'btn-red';
-            } else {
-                img.src = '';
-                container.style.display = 'none';
-                ctrl.style.display = 'none';
-                btn.innerText = 'Turn Camera ON';
-                btn.className = 'btn-blue';
-            }
-        }
-        
-        function takeSnapshot() {
-            const btn = document.getElementById('snapBtn');
-            const status = document.getElementById('camStatus');
-            btn.disabled = true;
-            status.innerText = "Capturing high-resolution image...";
-
-            fetch('/capture')
-                .then(r => {
-                    if(!r.ok) throw new Error('Capture failed');
-                    return r.blob();
-                })
-                .then(blob => {
-                    if (camRotation === 0) {
-                        downloadBlob(blob);
-                    } else {
-                        const img = new Image();
-                        img.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            const ctx = canvas.getContext('2d');
-                            if (camRotation % 180 !== 0) {
-                                canvas.width = img.naturalHeight;
-                                canvas.height = img.naturalWidth;
-                            } else {
-                                canvas.width = img.naturalWidth;
-                                canvas.height = img.naturalHeight;
-                            }
-                            ctx.translate(canvas.width/2, canvas.height/2);
-                            ctx.rotate(camRotation * Math.PI / 180);
-                            ctx.drawImage(img, -img.naturalWidth/2, -img.naturalHeight/2);
-                            canvas.toBlob(rotatedBlob => {
-                                downloadBlob(rotatedBlob);
-                            }, 'image/jpeg', 0.95);
-                        };
-                        img.src = URL.createObjectURL(blob);
-                    }
-                })
-                .catch(err => {
-                    console.error(err);
-                    status.innerText = "Error taking snapshot.";
-                    alert("Capture Error! Check Serial Monitor.");
-                    btn.disabled = false;
-                });
-        }
-        
-        function downloadBlob(blob) {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = `snapshot_${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-            const status = document.getElementById('camStatus');
-            status.innerText = "Snapshot saved!";
-            document.getElementById('snapBtn').disabled = false;
-            setTimeout(() => { status.innerText = "Streaming live..."; }, 3000);
-        }
-        
-        function scan(){
-            document.getElementById('status').innerText = 'Scanning...';
-            fetch('/scan').then(r=>r.json()).then(d=>{
-                let s = document.getElementById('ssid');
-                s.innerHTML = '<option value="">-- Select --</option>';
-                d.forEach(n=>{ s.innerHTML += '<option value="'+n+'">'+n+'</option>'; });
-                document.getElementById('status').innerText = 'Found ' + d.length + ' networks';
-            }).catch(() => document.getElementById('status').innerText = 'Scan Error');
-        }
-        function save(){
-            let s = document.getElementById('ssid').value, p = document.getElementById('pass').value;
-            if(!s) return alert('Select SSID');
-            fetch('/save', { method:'POST', body:JSON.stringify({ssid:s, pass:p}) }).then(()=>{
-                alert('Credentials saved! Rebooting...');
-            });
-        }
-        function forceAP(){ if(confirm("Switch to AP Mode and reboot?")) fetch('/switch_to_ap', { method: 'POST' }).then(() => alert('Rebooting...')); }
-        function forceWiFi(){ if(confirm("Switch to Wi-Fi Mode and reboot?")) fetch('/switch_to_wifi', { method: 'POST' }).then(() => alert('Rebooting...')); }
-        function setMode(m){
-            if(confirm("Switch to " + m.toUpperCase() + " profile and reboot?")) {
-                fetch('/switch_mode', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:m}) }).then(() => alert('Rebooting...'));
-            }
-        }
-
-        function loadStatus(){
-            fetch('/status').then(r=>r.json()).then(d=>{
-                document.getElementById('lastcmd').innerText = d.last_cmd;
-                document.getElementById('curangle').innerText = d.angle;
-                if (document.activeElement !== document.getElementById('angleSlider')) {
-                    document.getElementById('angleSlider').value = d.angle;
-                    document.getElementById('sliderVal').innerText = d.angle;
-                }
-            });
-        }
-        setInterval(loadStatus, 3000);
-        window.onload = loadStatus;
-    </script>
-</body></html>
+    }
+    setInterval(fetchStatus, 1500);
+    window.onload = fetchStatus;
+</script>
+</body>
+</html>
 )raw_html";
 
 const char HTML_CLAW_BASIC[] = R"raw_html(<!DOCTYPE html>
@@ -260,22 +99,15 @@ const char HTML_CLAW_BASIC[] = R"raw_html(<!DOCTYPE html>
 <style>
   body{background:#020617;color:#fff;font-family:sans-serif;padding:20px;max-width:500px;margin:auto;}
   .card{background:#0f172a;padding:20px;border-radius:10px;margin-bottom:20px;border:1px solid #1e293b;}
-  button,select,input{width:100%;padding:12px;margin:5px 0;border-radius:8px;border:none;background:#1e293b;color:#fff;}
-  button{background:#2563eb;font-weight:bold;cursor:pointer;margin-top:10px;}
-  h2{color:#f59e0b;}
+  button{width:100%;padding:12px;margin:5px 0;border-radius:8px;border:none;background:#2563eb;color:#fff;font-weight:bold;cursor:pointer;}
+  h2{color:#38bdf8;}
 </style>
 </head><body>
 <h2>ESP32 Claw Diagnostics</h2>
 <div class="card">
-  <button style="background:#10b981;" onclick="fetch('/claw?cmd=open')">Open Claw</button>
-  <button style="background:#ef4444;" onclick="fetch('/claw?cmd=close')">Close Claw</button>
-</div>
-<div class="card">
-  <h3 style="margin-top:0;">Wi-Fi Setup</h3>
-  <button onclick="fetch('/scan').then(r=>r.json()).then(d=>{let s=document.getElementById('ssid');s.innerHTML='';d.forEach(n=>s.innerHTML+='<option>'+n+'</option>');})">Scan Networks</button>
-  <select id="ssid"><option>Scan first...</option></select>
-  <input type="password" id="pass" placeholder="Wi-Fi Password">
-  <button style="background:#10b981;" onclick="fetch('/save',{method:'POST',body:JSON.stringify({ssid:document.getElementById('ssid').value,pass:document.getElementById('pass').value})}).then(()=>alert('Rebooting...'))">Save & Connect</button>
+  <button onclick="fetch('/claw?cmd=open')">Open Claw</button>
+  <button onclick="fetch('/claw?cmd=close')">Close Claw</button>
+  <button onclick="fetch('/claw?cmd=stop')" style="background:#ef4444;">Relax Claw</button>
 </div>
 </body></html>
 )raw_html";
