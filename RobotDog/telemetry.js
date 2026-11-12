@@ -1,20 +1,13 @@
-let sensorEnabled = true;
-let userWantsSensorEnabled = true;
+let sensorEnabled = false;
 let isObstacleTripped = false;
 let telemetryPollTimer = null;
 
 function initSensorStorage() {
+  // Sensor is strictly disabled by default
+  sensorEnabled = false;
+  updateSensorState(false);
+
   try {
-    const en = localStorage.getItem("esp32_sensor_enabled");
-    if (en !== null) {
-      userWantsSensorEnabled = (en === "true");
-      sensorEnabled = userWantsSensorEnabled;
-      updateSensorState(sensorEnabled);
-    } else {
-      userWantsSensorEnabled = true;
-      sensorEnabled = true;
-      updateSensorState(true);
-    }
     const th = localStorage.getItem("esp32_sens_thresh");
     if (th) {
       const sl = document.getElementById("sens-dist-slider");
@@ -53,15 +46,40 @@ function updateSensorState(enabled) {
     btn.style.background = sensorEnabled ? "#10b981" : "#ef4444";
   }
 
-  // Auto-rearm if user requested sensor ON but ESP32 is reporting 0
-  if (userWantsSensorEnabled && !enabled && isConnected) {
-    sendCommand("sensor on");
+  if (!sensorEnabled) {
+    const distEl = document.getElementById("sens-live-dist");
+    const tagEl = document.getElementById("sens-source-tag");
+    if (distEl) {
+      distEl.innerText = "--";
+      distEl.style.color = "rgba(255,255,255,0.3)";
+    }
+    if (tagEl) {
+      tagEl.innerText = "OFF";
+      tagEl.style.color = "rgba(255,255,255,0.4)";
+    }
+    isObstacleTripped = false;
   }
 }
 
 function updateDistanceUI(distVal, thVal, sourceLabel = "BLE") {
   const distEl = document.getElementById("sens-live-dist");
   const tagEl = document.getElementById("sens-source-tag");
+
+  // If sensor is disabled, display standby indicators and suppress trip logic
+  if (!sensorEnabled) {
+    if (distEl) {
+      distEl.innerText = "--";
+      distEl.style.color = "rgba(255,255,255,0.3)";
+    }
+    if (tagEl) {
+      tagEl.innerText = "OFF";
+      tagEl.style.color = "rgba(255,255,255,0.4)";
+    }
+    isObstacleTripped = false;
+    return;
+  }
+
+  // Active state: update source and live distance
   if (tagEl) {
     tagEl.innerText = sourceLabel;
     tagEl.style.color = sourceLabel === "BLE" ? "#38bdf8" : "#10b981";
@@ -76,18 +94,15 @@ function updateDistanceUI(distVal, thVal, sourceLabel = "BLE") {
       distEl.style.color = (numDist < numTh) ? "#ef4444" : "#10b981";
     }
 
-    // Active Supervisory Trigger Logic
-    if (userWantsSensorEnabled || sensorEnabled) {
-      if (numDist < numTh) {
-        if (!isObstacleTripped) {
-          isObstacleTripped = true;
-          triggerObstacleTrip(numDist, numTh);
-        }
-      } else {
-        if (isObstacleTripped) {
-          isObstacleTripped = false;
-          triggerObstacleClear(numDist, numTh);
-        }
+    if (numDist < numTh) {
+      if (!isObstacleTripped) {
+        isObstacleTripped = true;
+        triggerObstacleTrip(numDist, numTh);
+      }
+    } else {
+      if (isObstacleTripped) {
+        isObstacleTripped = false;
+        triggerObstacleClear(numDist, numTh);
       }
     }
   } else {
@@ -137,15 +152,22 @@ function playSensorSound(audType) {
 }
 
 function toggleSensor() {
-  userWantsSensorEnabled = !sensorEnabled;
-  sensorEnabled = userWantsSensorEnabled;
+  sensorEnabled = !sensorEnabled;
+  updateSensorState(sensorEnabled);
   try {
     localStorage.setItem("esp32_sensor_enabled", sensorEnabled ? "true" : "false");
   } catch (e) {}
-  updateSensorState(sensorEnabled);
-  sendCommand(sensorEnabled ? "sensor on" : "sensor off");
-  showToast(`Sensor turned ${sensorEnabled ? "ON" : "OFF"}`, sensorEnabled ? "success" : "warn");
-  appendLog("Sensor", `Command: ${sensorEnabled ? "ON" : "OFF"}`);
+
+  if (sensorEnabled) {
+    sendCommand("sensor on");
+    showToast("Obstacle Sensor ENABLED", "success");
+    appendLog("Sensor", "Command: sensor on (ARMED)");
+  } else {
+    sendCommand("sensor off");
+    updateDistanceUI(null, null);
+    showToast("Obstacle Sensor DISABLED", "warn");
+    appendLog("Sensor", "Command: sensor off (DISARMED)");
+  }
 }
 
 function updateSensorConfig() {
@@ -183,12 +205,11 @@ function syncSensorToRobot() {
   sendCommand(`sens_actions ${trip} ${clear}`);
   sendCommand(`sens_audio ${tripAud} ${clearAud}`);
 
-  if (userWantsSensorEnabled) {
+  if (sensorEnabled) {
     sendCommand("sensor on");
-    sensorEnabled = true;
-    updateSensorState(true);
+  } else {
+    sendCommand("sensor off");
   }
-  appendLog("Sync", `Pushed sensor config to robot (Active: ${userWantsSensorEnabled ? "ON" : "OFF"})`);
 }
 
 function startActivePolling() {
@@ -196,10 +217,9 @@ function startActivePolling() {
   telemetryPollTimer = setInterval(async () => {
     if (!isConnected) return;
     
-    // Actively query status
+    // Query status without flooding the serial bus (1500ms cycle)
     await sendCommand("status");
 
-    // Perform direct read on TX characteristic
     const backend = getBleBackend();
     if (backend?.type === "capacitor" && nativeDeviceId) {
       try {
@@ -215,7 +235,7 @@ function startActivePolling() {
         }
       } catch (e) {}
     }
-  }, 600);
+  }, 1500);
 }
 
 function stopTelemetryTimers() {

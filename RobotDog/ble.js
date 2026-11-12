@@ -123,7 +123,6 @@ async function connectDevice() {
           if (result) {
             const decoded = universalBleDecode(result.value !== undefined ? result.value : result);
             if (decoded) handleIncomingBleData(decoded, "NOTIF");
-            else appendLog("RAW-HEX", JSON.stringify(result));
           }
         });
         appendLog("BLE", "Notifications registered on TX Characteristic.");
@@ -270,7 +269,10 @@ async function executeSendCommand(commandText) {
 
       txCount++;
       updateCounterDisplay();
-      appendLog("TX", commandText);
+      // Suppress logging of routine status commands to prevent console spam
+      if (commandText !== "status") {
+        appendLog("TX", commandText);
+      }
 
     } else if (webTxChar) {
       const encoder = new TextEncoder();
@@ -281,7 +283,9 @@ async function executeSendCommand(commandText) {
 
       txCount++;
       updateCounterDisplay();
-      appendLog("TX", commandText);
+      if (commandText !== "status") {
+        appendLog("TX", commandText);
+      }
     }
   } catch (err) {
     appendLog("Send Error", err.message || err);
@@ -368,7 +372,10 @@ function handleIncomingBleData(rawText, sourceTag = "BLE") {
       }
     }
 
-    appendLog(sourceTag, text);
+    // Filter continuous telemetry packets from flooding the console
+    if (!text.startsWith("SENS:") && !text.startsWith("STATUS:") && !text.startsWith("ANG:")) {
+      appendLog(sourceTag, text);
+    }
 
     if (text.startsWith("SENS:")) {
       const parts = text.substring(5).split(",");
@@ -439,6 +446,7 @@ function appendLog(sender, text) {
   if (sender.includes("Error") || sender.includes("Warn")) senderColor = "#f87171";
   if (sender === "TX") senderColor = "#fbbf24";
   if (sender === "Obstacle") senderColor = "#f43f5e";
+  if (sender === "Sensor") senderColor = "#a855f7";
 
   div.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[${time}]</span> <span style="color:${senderColor}; font-weight:700;">${sender}:</span> <span>${escapeHtml(text)}</span>`;
   term.appendChild(div);
