@@ -1,3 +1,4 @@
+
 // 11-3ESPSEEEDRobotNewN8R8/main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -50,7 +51,7 @@ static bool ble_sync_front = false;
 static bool ble_sync_back = false;
 static bool ble_sync_all = false;
 
-// Dedicated FreeRTOS queue to process all BLE commands off the nimble_host stack
+// Command queue to decouple execution from the NimBLE host stack
 #define BLE_CMD_QUEUE_LEN 16
 #define BLE_CMD_MAX_LEN 128
 static QueueHandle_t s_ble_cmd_queue = NULL;
@@ -106,8 +107,8 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    // 1. Send concise, guaranteed-fit sensor telemetry packet first
-    char sens_short[64];
+    // 1. Send dedicated sensor frame (under 25 bytes, guaranteed to pass CoreBluetooth)
+    char sens_short[48];
     snprintf(sens_short, sizeof(sens_short), "SENS:%.1f,%d,%ld\n",
              (double)sensor_get_distance(),
              sensor_is_enabled() ? 1 : 0,
@@ -115,7 +116,7 @@ static void send_full_status(void) {
     ble_manager_send_notify(sens_short);
 
     // 2. Send joint angles
-    char angles_str[64];
+    char angles_str[48];
     snprintf(angles_str, sizeof(angles_str), "ANG:%d,%d,%d,%d\n", hl, hr, ll, lr);
     ble_manager_send_notify(angles_str);
 
@@ -124,14 +125,10 @@ static void send_full_status(void) {
     snprintf(off_str, sizeof(off_str), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", ohl, ohr, oll, olr);
     ble_manager_send_notify(off_str);
 
-    // 4. Send detailed status
-    char status_str[160];
-    snprintf(status_str, sizeof(status_str),
-             "STATUS:vol=%d,dist=%.1f,sen=%d,th=%ld\n",
-             audio_get_volume(),
-             (double)sensor_get_distance(),
-             sensor_is_enabled() ? 1 : 0,
-             (long)sensor_get_threshold());
+    // 4. Send volume and telemetry
+    char status_str[80];
+    snprintf(status_str, sizeof(status_str), "STATUS:vol=%d,dist=%.1f\n",
+             audio_get_volume(), (double)sensor_get_distance());
     ble_manager_send_notify(status_str);
 }
 
@@ -565,11 +562,29 @@ static void execute_ble_command(const char* p) {
     ble_manager_send_notify(reply);
 }
 
+// Background Worker Task: handles incoming queue and streams telemetry
 static void ble_cmd_worker_task(void *pvParameters) {
     char cmd_buf[BLE_CMD_MAX_LEN];
+    TickType_t last_telemetry_tick = xTaskGetTickCount();
+
     while (1) {
-        if (xQueueReceive(s_ble_cmd_queue, cmd_buf, portMAX_DELAY) == pdTRUE) {
+        // Wait up to 350ms for a command; if none, stream a fresh distance telemetry packet
+        if (xQueueReceive(s_ble_cmd_queue, cmd_buf, pdMS_TO_TICKS(350)) == pdTRUE) {
             execute_ble_command(cmd_buf);
+        }
+
+        // Active continuous streaming to iOS app when connected and subscribed
+        if (is_ble_connected_flag && is_subscribed_flag) {
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_telemetry_tick) >= pdMS_TO_TICKS(350)) {
+                last_telemetry_tick = now;
+                char sens_packet[48];
+                snprintf(sens_packet, sizeof(sens_packet), "SENS:%.1f,%d,%ld\n",
+                         (double)sensor_get_distance(),
+                         sensor_is_enabled() ? 1 : 0,
+                         (long)sensor_get_threshold());
+                ble_manager_send_notify(sens_packet);
+            }
         }
     }
 }
@@ -776,5 +791,5 @@ void ble_manager_init(void) {
     }
 
     nimble_port_freertos_init(ble_host_task);
-    ESP_LOGI(TAG, "BLE Manager Initialized with dedicated worker thread (8KB stack).");
+    ESP_LOGI(TAG, "BLE Manager Initialized with active continuous telemetry stream.");
 }
