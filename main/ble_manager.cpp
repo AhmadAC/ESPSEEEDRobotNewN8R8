@@ -39,6 +39,7 @@ static const ble_uuid128_t gatt_svr_chr_tx_uuid =
 static uint16_t active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_tx_val_handle = 0;
 static bool is_ble_connected_flag = false;
+static bool is_subscribed_flag = false;
 static char current_ip[32] = "192.168.4.1";
 
 static const char *DEFAULT_SWITCH_COMMANDS[16] = {
@@ -53,7 +54,7 @@ bool ble_manager_is_connected(void) {
 }
 
 void ble_manager_send_notify(const char* message) {
-    if (!is_ble_connected_flag || active_conn_handle == BLE_HS_CONN_HANDLE_NONE || s_tx_val_handle == 0 || message == NULL) {
+    if (!is_ble_connected_flag || !is_subscribed_flag || active_conn_handle == BLE_HS_CONN_HANDLE_NONE || s_tx_val_handle == 0 || message == NULL) {
         return;
     }
     struct os_mbuf *om = ble_hs_mbuf_from_flat(message, strlen(message));
@@ -78,6 +79,10 @@ void ble_manager_send_status(const char* status_json) {
 }
 
 static void send_full_status(void) {
+    if (!is_ble_connected_flag || !is_subscribed_flag) {
+        return;
+    }
+
     int bclk = 10, lrc = 11, din = 12;
     audio_get_pins(&bclk, &lrc, &din);
 
@@ -88,7 +93,7 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    char status_str[192];
+    char status_str[160];
     snprintf(status_str, sizeof(status_str),
              "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d\n",
              is_claw_mode ? claw_current_angle : ll,
@@ -98,7 +103,7 @@ static void send_full_status(void) {
 
     vTaskDelay(pdMS_TO_TICKS(20));
 
-    char sens_str[192];
+    char sens_str[160];
     snprintf(sens_str, sizeof(sens_str),
              "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
              sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
@@ -110,22 +115,11 @@ static void send_full_status(void) {
 static void process_ble_command(const char* raw_cmd) {
     if (!raw_cmd) return;
 
-    char cmd_buf[256];
-    strncpy(cmd_buf, raw_cmd, sizeof(cmd_buf) - 1);
-    cmd_buf[sizeof(cmd_buf) - 1] = '\0';
+    // Trim leading whitespace
+    const char* p = raw_cmd;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0') return;
 
-    char *start = cmd_buf;
-    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
-    if (*start == '\0') return;
-
-    char *end = start + strlen(start) - 1;
-    while (end >= start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
-        *end = '\0';
-        end--;
-    }
-    if (*start == '\0') return;
-
-    const char* p = start;
     ESP_LOGI(TAG, "BLE Command Received: '%s'", p);
 
     if (strncmp(p, "wifi:", 5) == 0 || strncmp(p, "w:", 2) == 0) {
@@ -278,8 +272,8 @@ static void process_ble_command(const char* raw_cmd) {
                     nvs_close(handle);
                 }
 
-                char confirm[300];
-                snprintf(confirm, sizeof(confirm), "SWKEY:%ld=%s\n", btn_idx, endptr);
+                char confirm[128];
+                snprintf(confirm, sizeof(confirm), "SWKEY:%ld=%.80s\n", btn_idx, endptr);
                 ble_manager_send_notify(confirm);
                 ESP_LOGI(TAG, "Switch Button %ld saved to NVS: '%s'", btn_idx, endptr);
                 return;
@@ -302,7 +296,7 @@ static void process_ble_command(const char* raw_cmd) {
             }
 
             char line[128];
-            snprintf(line, sizeof(line), "SWKEY:%d=%s\n", i, val);
+            snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, val);
             ble_manager_send_notify(line);
             vTaskDelay(pdMS_TO_TICKS(15));
         }
@@ -320,7 +314,7 @@ static void process_ble_command(const char* raw_cmd) {
         }
         for (int i = 0; i < 16; i++) {
             char line[128];
-            snprintf(line, sizeof(line), "SWKEY:%d=%s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
+            snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
             ble_manager_send_notify(line);
             vTaskDelay(pdMS_TO_TICKS(15));
         }
@@ -462,8 +456,8 @@ static void process_ble_command(const char* raw_cmd) {
         servo_set_action(p);
     }
 
-    char reply[300];
-    snprintf(reply, sizeof(reply), ">> Action: %s\n", p);
+    char reply[128];
+    snprintf(reply, sizeof(reply), ">> Action: %.90s\n", p);
     ble_manager_send_notify(reply);
 }
 
@@ -479,10 +473,11 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
         int rc = ble_hs_mbuf_to_flat(ctxt->om, buf, om_len, NULL);
         if (rc == 0) {
             buf[om_len] = '\0';
-            char *line = strtok(buf, "\r\n");
-            while (line != NULL) {
-                process_ble_command(line);
-                line = strtok(NULL, "\r\n");
+            while (om_len > 0 && (buf[om_len - 1] == '\r' || buf[om_len - 1] == '\n')) {
+                buf[--om_len] = '\0';
+            }
+            if (om_len > 0) {
+                process_ble_command(buf);
             }
         }
     }
@@ -536,11 +531,13 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             if (event->connect.status == 0) {
                 active_conn_handle = event->connect.conn_handle;
                 is_ble_connected_flag = true;
+                is_subscribed_flag = false;
                 ESP_LOGI(TAG, "BLE Client Connected! Connection Handle: %d", active_conn_handle);
-                send_full_status();
+                // Do NOT send notifications here - client has not subscribed yet
             } else {
                 active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
                 is_ble_connected_flag = false;
+                is_subscribed_flag = false;
                 ble_advertise();
             }
             break;
@@ -549,6 +546,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             ESP_LOGW(TAG, "BLE Client Disconnected! Reason: %d", event->disconnect.reason);
             active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             is_ble_connected_flag = false;
+            is_subscribed_flag = false;
             ble_advertise();
             break;
 
@@ -558,7 +556,10 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
 
         case BLE_GAP_EVENT_SUBSCRIBE:
             ESP_LOGI(TAG, "BLE Client Subscribed to Notifications");
-            send_full_status();
+            is_subscribed_flag = (event->subscribe.cur_notify != 0);
+            if (is_subscribed_flag) {
+                send_full_status();
+            }
             break;
 
         default:
