@@ -42,6 +42,11 @@ static bool is_ble_connected_flag = false;
 static bool is_subscribed_flag = false;
 static char current_ip[32] = "192.168.4.1";
 
+// Synchronization state for leg joints
+static bool ble_sync_front = false;
+static bool ble_sync_back = false;
+static bool ble_sync_all = false;
+
 static const char *DEFAULT_SWITCH_COMMANDS[16] = {
     "stop", "stand", "sit", "bark",
     "beep", "stop", "vol -10", "vol +10",
@@ -93,17 +98,18 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    char status_str[160];
+    // Embed live distance and sensor state directly in the STATUS frame
+    char status_str[220];
     snprintf(status_str, sizeof(status_str),
-             "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d\n",
+             "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d,dist=%.1f,sen=%d,th=%d\n",
              is_claw_mode ? claw_current_angle : ll,
              audio_get_volume(), bclk, lrc, din,
-             ll, hr, hl, lr, oll, ohr, ohl, olr);
+             ll, hr, hl, lr, oll, ohr, ohl, olr,
+             (double)sensor_get_distance(), sensor_is_enabled() ? 1 : 0, (int)sensor_get_threshold());
     ble_manager_send_notify(status_str);
 
-    vTaskDelay(pdMS_TO_TICKS(20));
-
-    char sens_str[160];
+    // Provide the detailed SENSOR frame with actions and audio hooks
+    char sens_str[180];
     snprintf(sens_str, sizeof(sens_str),
              "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
              sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
@@ -141,6 +147,7 @@ static void process_ble_command(const char* raw_cmd) {
         }
     }
 
+    // Ultrasonic Sensor Controls
     if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
         sensor_set_enabled(true);
         ble_manager_send_notify(">> Sensor ENABLED\n");
@@ -175,60 +182,139 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
+    // Leg Synchronization Modes
+    if (strcmp(p, "sync_front on") == 0) {
+        ble_sync_front = true;
+        ble_manager_send_notify(">> Front Legs Sync ON\n");
+        return;
+    }
+    if (strcmp(p, "sync_front off") == 0) {
+        ble_sync_front = false;
+        ble_manager_send_notify(">> Front Legs Sync OFF\n");
+        return;
+    }
+    if (strcmp(p, "sync_back on") == 0) {
+        ble_sync_back = true;
+        ble_manager_send_notify(">> Back Legs Sync ON\n");
+        return;
+    }
+    if (strcmp(p, "sync_back off") == 0) {
+        ble_sync_back = false;
+        ble_manager_send_notify(">> Back Legs Sync OFF\n");
+        return;
+    }
+    if (strcmp(p, "sync_all on") == 0) {
+        ble_sync_all = true;
+        ble_sync_front = true;
+        ble_sync_back = true;
+        ble_manager_send_notify(">> All 4 Legs Sync ON\n");
+        return;
+    }
+    if (strcmp(p, "sync_all off") == 0) {
+        ble_sync_all = false;
+        ble_sync_front = false;
+        ble_sync_back = false;
+        ble_manager_send_notify(">> All 4 Legs Sync OFF\n");
+        return;
+    }
+
+    // Individual & Synchronized Leg Angles
     int leg_ang = 0;
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
         servo_set_target("high_left", leg_ang);
+        if (ble_sync_front || ble_sync_all) {
+            servo_set_target("high_right", leg_ang);
+        }
+        if (ble_sync_all) {
+            servo_set_target("low_left", leg_ang);
+            servo_set_target("low_right", leg_ang);
+        }
         send_full_status();
         return;
     }
     if (sscanf(p, "hr %d", &leg_ang) == 1) {
         servo_set_target("high_right", leg_ang);
+        if (ble_sync_front || ble_sync_all) {
+            servo_set_target("high_left", leg_ang);
+        }
+        if (ble_sync_all) {
+            servo_set_target("low_left", leg_ang);
+            servo_set_target("low_right", leg_ang);
+        }
         send_full_status();
         return;
     }
     if (sscanf(p, "ll %d", &leg_ang) == 1) {
         servo_set_target("low_left", leg_ang);
+        if (ble_sync_back || ble_sync_all) {
+            servo_set_target("low_right", leg_ang);
+        }
+        if (ble_sync_all) {
+            servo_set_target("high_left", leg_ang);
+            servo_set_target("high_right", leg_ang);
+        }
         send_full_status();
         return;
     }
     if (sscanf(p, "lr %d", &leg_ang) == 1) {
         servo_set_target("low_right", leg_ang);
+        if (ble_sync_back || ble_sync_all) {
+            servo_set_target("low_left", leg_ang);
+        }
+        if (ble_sync_all) {
+            servo_set_target("high_left", leg_ang);
+            servo_set_target("high_right", leg_ang);
+        }
         send_full_status();
         return;
     }
 
+    // Hardware Offset Calibration & NVS Management
     int c_ll = 0, c_hr = 0, c_hl = 0, c_lr = 0;
     if (sscanf(p, "cal_set offsets %d %d %d %d", &c_ll, &c_hr, &c_hl, &c_lr) == 4) {
         servo_set_calibration("offsets", c_ll, c_hr, c_hl, c_lr, true);
-        ble_manager_send_notify(">> Offsets Saved to Flash\n");
+        servo_set_action_bypass("stand"); // Reset joints to 90 deg stand pose
+        ble_manager_send_notify(">> Offsets Saved to Flash (Reset to 90 deg Stand Pose)\n");
         send_full_status();
         return;
     }
     if (sscanf(p, "offset ll %d", &c_ll) == 1) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
-        servo_set_calibration("offsets", c_ll, o_hr, o_hl, o_lr, true);
+        int new_lr = (ble_sync_back || ble_sync_all) ? c_ll : o_lr;
+        int new_hl = (ble_sync_all) ? c_ll : o_hl;
+        int new_hr = (ble_sync_all) ? c_ll : o_hr;
+        servo_set_calibration("offsets", c_ll, new_hr, new_hl, new_lr, true);
         send_full_status();
         return;
     }
     if (sscanf(p, "offset hr %d", &c_hr) == 1) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
-        servo_set_calibration("offsets", o_ll, c_hr, o_hl, o_lr, true);
+        int new_hl = (ble_sync_front || ble_sync_all) ? c_hr : o_hl;
+        int new_ll = (ble_sync_all) ? c_hr : o_ll;
+        int new_lr = (ble_sync_all) ? c_hr : o_lr;
+        servo_set_calibration("offsets", new_ll, c_hr, new_hl, new_lr, true);
         send_full_status();
         return;
     }
     if (sscanf(p, "offset hl %d", &c_hl) == 1) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
-        servo_set_calibration("offsets", o_ll, o_hr, c_hl, o_lr, true);
+        int new_hr = (ble_sync_front || ble_sync_all) ? c_hl : o_hr;
+        int new_ll = (ble_sync_all) ? c_hl : o_ll;
+        int new_lr = (ble_sync_all) ? c_hl : o_lr;
+        servo_set_calibration("offsets", new_ll, new_hr, c_hl, new_lr, true);
         send_full_status();
         return;
     }
     if (sscanf(p, "offset lr %d", &c_lr) == 1) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
-        servo_set_calibration("offsets", o_ll, o_hr, o_hl, c_lr, true);
+        int new_ll = (ble_sync_back || ble_sync_all) ? c_lr : o_ll;
+        int new_hl = (ble_sync_all) ? c_lr : o_hl;
+        int new_hr = (ble_sync_all) ? c_lr : o_hr;
+        servo_set_calibration("offsets", new_ll, new_hr, new_hl, c_lr, true);
         send_full_status();
         return;
     }
@@ -236,7 +322,8 @@ static void process_ble_command(const char* raw_cmd) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
         servo_set_calibration("offsets", o_ll, o_hr, o_hl, o_lr, true);
-        ble_manager_send_notify(">> Calibration saved to flash\n");
+        servo_set_action_bypass("stand");
+        ble_manager_send_notify(">> Calibration saved to flash (Reset to 90 deg Stand Pose)\n");
         send_full_status();
         return;
     }
@@ -250,11 +337,13 @@ static void process_ble_command(const char* raw_cmd) {
     }
     if (strcmp(p, "cal_reset") == 0) {
         servo_set_calibration("offsets", 0, 0, 0, 11, true);
-        ble_manager_send_notify(">> Calibration reset to defaults\n");
+        servo_set_action_bypass("stand");
+        ble_manager_send_notify(">> Calibration reset to defaults (90 deg Stand Pose)\n");
         send_full_status();
         return;
     }
 
+    // Switch Matrix Remapper Handlers
     if (strncmp(p, "switchkey ", 10) == 0) {
         const char *arg = p + 10;
         while (*arg == ' ') arg++;
@@ -298,7 +387,6 @@ static void process_ble_command(const char* raw_cmd) {
             char line[128];
             snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, val);
             ble_manager_send_notify(line);
-            vTaskDelay(pdMS_TO_TICKS(15));
         }
 
         if (nvs_ok) nvs_close(handle);
@@ -316,12 +404,12 @@ static void process_ble_command(const char* raw_cmd) {
             char line[128];
             snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
             ble_manager_send_notify(line);
-            vTaskDelay(pdMS_TO_TICKS(15));
         }
         ble_manager_send_notify(">> Switch mappings reset to defaults.\n");
         return;
     }
 
+    // Audio & Speaker Triggers
     if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0) {
         audio_play("dog_bark");
         ble_manager_send_notify(">> Playing Dog Bark\n");
@@ -366,6 +454,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
+    // System Telemetry & Reboot
     if (strcmp(p, "status") == 0) {
         send_full_status();
         return;
@@ -400,6 +489,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
+    // JSON Command Stream
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -441,6 +531,7 @@ static void process_ble_command(const char* raw_cmd) {
             cJSON *lr_o = cJSON_GetObjectItem(cal_off, "lr");
             if (ll_o && hr_o && hl_o && lr_o) {
                 servo_set_calibration("offsets", ll_o->valueint, hr_o->valueint, hl_o->valueint, lr_o->valueint, true);
+                servo_set_action_bypass("stand");
             }
         }
 
@@ -450,6 +541,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
+    // Direct Kinematics or Claw Pose Action
     if (is_claw_mode) {
         claw_execute_command(p);
     } else {
@@ -533,7 +625,6 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
                 is_ble_connected_flag = true;
                 is_subscribed_flag = false;
                 ESP_LOGI(TAG, "BLE Client Connected! Connection Handle: %d", active_conn_handle);
-                // Do NOT send notifications here - client has not subscribed yet
             } else {
                 active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
                 is_ble_connected_flag = false;
@@ -560,6 +651,10 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             if (is_subscribed_flag) {
                 send_full_status();
             }
+            break;
+
+        case BLE_GAP_EVENT_MTU:
+            ESP_LOGI(TAG, "BLE MTU updated to %d on channel %d", event->mtu.value, event->mtu.conn_handle);
             break;
 
         default:
@@ -628,6 +723,8 @@ void ble_manager_init(void) {
     ble_hs_cfg.sm_bonding = 0;
     ble_hs_cfg.sm_mitm = 0;
     ble_hs_cfg.sm_sc = 0;
+
+    ble_att_set_preferred_mtu(512);
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
