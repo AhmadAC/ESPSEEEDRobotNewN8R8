@@ -50,7 +50,7 @@ static bool ble_sync_front = false;
 static bool ble_sync_back = false;
 static bool ble_sync_all = false;
 
-// Command queue to keep heavy operations off the nimble_host task stack
+// Dedicated FreeRTOS queue to process all BLE commands off the nimble_host stack
 #define BLE_CMD_QUEUE_LEN 16
 #define BLE_CMD_MAX_LEN 128
 static QueueHandle_t s_ble_cmd_queue = NULL;
@@ -106,29 +106,33 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    // Allocate on heap to guarantee stack safety
-    char *status_str = (char*)malloc(256);
-    if (status_str) {
-        snprintf(status_str, 256,
-                 "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d,dist=%.1f,sen=%d,th=%d\n",
-                 is_claw_mode ? claw_current_angle : ll,
-                 audio_get_volume(), bclk, lrc, din,
-                 ll, hr, hl, lr, oll, ohr, ohl, olr,
-                 (double)sensor_get_distance(), sensor_is_enabled() ? 1 : 0, (int)sensor_get_threshold());
-        ble_manager_send_notify(status_str);
-        free(status_str);
-    }
+    // 1. Send concise, guaranteed-fit sensor telemetry packet first
+    char sens_short[64];
+    snprintf(sens_short, sizeof(sens_short), "SENS:%.1f,%d,%ld\n",
+             (double)sensor_get_distance(),
+             sensor_is_enabled() ? 1 : 0,
+             (long)sensor_get_threshold());
+    ble_manager_send_notify(sens_short);
 
-    char *sens_str = (char*)malloc(192);
-    if (sens_str) {
-        snprintf(sens_str, 192,
-                 "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
-                 sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
-                 sensor_get_tripped_action(), sensor_get_cleared_action(),
-                 sensor_get_tripped_audio(), sensor_get_cleared_audio());
-        ble_manager_send_notify(sens_str);
-        free(sens_str);
-    }
+    // 2. Send joint angles
+    char angles_str[64];
+    snprintf(angles_str, sizeof(angles_str), "ANG:%d,%d,%d,%d\n", hl, hr, ll, lr);
+    ble_manager_send_notify(angles_str);
+
+    // 3. Send joint offsets
+    char off_str[64];
+    snprintf(off_str, sizeof(off_str), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", ohl, ohr, oll, olr);
+    ble_manager_send_notify(off_str);
+
+    // 4. Send detailed status
+    char status_str[160];
+    snprintf(status_str, sizeof(status_str),
+             "STATUS:vol=%d,dist=%.1f,sen=%d,th=%ld\n",
+             audio_get_volume(),
+             (double)sensor_get_distance(),
+             sensor_is_enabled() ? 1 : 0,
+             (long)sensor_get_threshold());
+    ble_manager_send_notify(status_str);
 }
 
 static void execute_ble_command(const char* p) {
@@ -339,7 +343,7 @@ static void execute_ble_command(const char* p) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
         char reply[64];
-        snprintf(reply, sizeof(reply), "CAL:oll=%d,ohr=%d,ohl=%d,olr=%d\n", o_ll, o_hr, o_hl, o_lr);
+        snprintf(reply, sizeof(reply), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", o_hl, o_hr, o_ll, o_lr);
         ble_manager_send_notify(reply);
         return;
     }
