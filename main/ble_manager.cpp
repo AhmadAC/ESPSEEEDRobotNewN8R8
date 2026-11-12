@@ -1,4 +1,3 @@
-
 // 11-3ESPSEEEDRobotNewN8R8/main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -99,7 +98,7 @@ static void send_full_status(void) {
 
     vTaskDelay(pdMS_TO_TICKS(20));
 
-    char sens_str[160];
+    char sens_str[192];
     snprintf(sens_str, sizeof(sens_str),
              "SENSOR:en=%d,dist=%.1f,th=%d,trip=%s,clear=%s,atrip=%s,aclear=%s\n",
              sensor_is_enabled() ? 1 : 0, (double)sensor_get_distance(), (int)sensor_get_threshold(),
@@ -279,7 +278,7 @@ static void process_ble_command(const char* raw_cmd) {
                     nvs_close(handle);
                 }
 
-                char confirm[80];
+                char confirm[300];
                 snprintf(confirm, sizeof(confirm), "SWKEY:%ld=%s\n", btn_idx, endptr);
                 ble_manager_send_notify(confirm);
                 ESP_LOGI(TAG, "Switch Button %ld saved to NVS: '%s'", btn_idx, endptr);
@@ -302,7 +301,7 @@ static void process_ble_command(const char* raw_cmd) {
                 strncpy(val, DEFAULT_SWITCH_COMMANDS[i], sizeof(val) - 1);
             }
 
-            char line[96];
+            char line[128];
             snprintf(line, sizeof(line), "SWKEY:%d=%s\n", i, val);
             ble_manager_send_notify(line);
             vTaskDelay(pdMS_TO_TICKS(15));
@@ -320,7 +319,7 @@ static void process_ble_command(const char* raw_cmd) {
             nvs_close(handle);
         }
         for (int i = 0; i < 16; i++) {
-            char line[96];
+            char line[128];
             snprintf(line, sizeof(line), "SWKEY:%d=%s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
             ble_manager_send_notify(line);
             vTaskDelay(pdMS_TO_TICKS(15));
@@ -463,7 +462,7 @@ static void process_ble_command(const char* raw_cmd) {
         servo_set_action(p);
     }
 
-    char reply[64];
+    char reply[300];
     snprintf(reply, sizeof(reply), ">> Action: %s\n", p);
     ble_manager_send_notify(reply);
 }
