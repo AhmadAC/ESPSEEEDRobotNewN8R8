@@ -63,14 +63,14 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    int64_t start_timeout = 30000; 
+    int64_t start_timeout = 35000; 
     
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
         if (esp_timer_get_time() - start_time > start_timeout) return -1.0f; 
     }
 
     int64_t echo_start = esp_timer_get_time();
-    int64_t echo_timeout = 30000; 
+    int64_t echo_timeout = 35000; 
     
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
         if (esp_timer_get_time() - echo_start > echo_timeout) return -1.0f; 
@@ -80,7 +80,7 @@ static float read_ultrasonic_distance() {
     int64_t duration = echo_end - echo_start;
     float distance = (float)duration / 58.0f;
     
-    if (distance > 300.0f || distance < 3.0f) return -1.0f;
+    if (distance > 300.0f || distance < 2.0f) return -1.0f;
     
     return distance;
 }
@@ -91,7 +91,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int consecutive_detections = 0;
 
     while (1) {
-        // HARD DISABLE: If not explicitly enabled by the user, stay 100% idle
+        // HARD DISABLE: If not explicitly enabled by user, stay 100% idle
         if (!sensor_enabled) {
             safety_lock_engaged = false;
             last_lock_state = false;
@@ -104,10 +104,10 @@ static void ultrasonic_safety_task(void *pvParameter) {
         float dist = read_ultrasonic_distance();
         current_distance = dist;
 
-        // Glitch rejection: Require 3 consecutive positive readings to trigger lock
+        // Glitch rejection: Require 2 consecutive positive readings to trigger lock
         if (dist > 0.0f && dist < (float)distance_threshold) {
             consecutive_detections++;
-            if (consecutive_detections >= 3) {
+            if (consecutive_detections >= 2) {
                 safety_lock_engaged = true;
                 last_detection_time = esp_timer_get_time();
             }
@@ -118,7 +118,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
             }
         }
 
-        // State Machine State Change Hook
+        // State Machine Hook
         if (safety_lock_engaged != last_lock_state) {
             if (reaction_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(reaction_delay));
@@ -135,7 +135,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
             last_lock_state = safety_lock_engaged;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(200));
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
 
@@ -143,16 +143,27 @@ void sensor_monitor_init() {
     load_sensor_nvs();
     sensor_enabled = false; // Always force disabled on boot
 
-    gpio_reset_pin(ULTRASONIC_TRIG_PIN);
-    gpio_set_direction(ULTRASONIC_TRIG_PIN, GPIO_MODE_OUTPUT);
+    // Direct GPIO configuration avoiding gpio_reset_pin pull-up conflicts
+    gpio_config_t trig_io = {};
+    trig_io.intr_type = GPIO_INTR_DISABLE;
+    trig_io.mode = GPIO_MODE_OUTPUT;
+    trig_io.pin_bit_mask = (1ULL << ULTRASONIC_TRIG_PIN);
+    trig_io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    trig_io.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&trig_io);
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
-    gpio_reset_pin(ULTRASONIC_ECHO_PIN);
-    gpio_set_direction(ULTRASONIC_ECHO_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_PULLDOWN_ONLY);
+    gpio_config_t echo_io = {};
+    echo_io.intr_type = GPIO_INTR_DISABLE;
+    echo_io.mode = GPIO_MODE_INPUT;
+    echo_io.pin_bit_mask = (1ULL << ULTRASONIC_ECHO_PIN);
+    echo_io.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    echo_io.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&echo_io);
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Ultrasonic Sensor initialized (DISABLED by default)");
+    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%d, Echo=GPIO%d (DISABLED by default)",
+             ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN);
 }
 
 bool sensor_is_enabled() { return sensor_enabled; }
@@ -163,6 +174,7 @@ void sensor_set_enabled(bool enabled) {
         safety_lock_engaged = false;
         current_distance = -1.0f;
     }
+    ESP_LOGI(TAG, "Ultrasonic sensor %s", enabled ? "ENABLED" : "DISABLED");
 }
 
 int32_t sensor_get_threshold() { return distance_threshold; }

@@ -12,8 +12,6 @@
 #include "audio_player.h"
 #include "sensor_monitor.h"
 #include "wifi_manager.h"
-#include "web_server.h" // Added dynamic Web Server linkage
-#include "esp_wifi.h"   // Included to verify AP client count
 #include "cJSON.h"
 #include "nvs.h"
 #include <string.h>
@@ -85,19 +83,21 @@ static void send_full_status(void) {
     audio_get_pins(&bclk, &lrc, &din);
 
     int ll = 90, hr = 90, hl = 90, lr = 90;
+    int oll = 0, ohr = 0, ohl = 0, olr = 0;
     if (!is_claw_mode && !is_cam_mode) {
         servo_get_angles(&ll, &hr, &hl, &lr);
+        servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    char status_str[160];
+    char status_str[192];
     snprintf(status_str, sizeof(status_str),
-             "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d\n",
+             "STATUS:angle=%d,vol=%d,bclk=%d,lrc=%d,din=%d,ll=%d,hr=%d,hl=%d,lr=%d,oll=%d,ohr=%d,ohl=%d,olr=%d\n",
              is_claw_mode ? claw_current_angle : ll,
              audio_get_volume(), bclk, lrc, din,
-             ll, hr, hl, lr);
+             ll, hr, hl, lr, oll, ohr, ohl, olr);
     ble_manager_send_notify(status_str);
 
-    vTaskDelay(pdMS_TO_TICKS(30)); // Delay prevents BLE notification congestion 
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     char sens_str[160];
     snprintf(sens_str, sizeof(sens_str),
@@ -138,7 +138,122 @@ static void process_ble_command(const char* raw_cmd) {
         }
     }
 
-    // 2. Switch Controller Button Mapping Persistence
+    // 2. Ultrasonic Sensor Direct Commands
+    if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
+        sensor_set_enabled(true);
+        ble_manager_send_notify(">> Sensor ENABLED\n");
+        send_full_status();
+        return;
+    }
+    if (strcmp(p, "sensor off") == 0 || strcmp(p, "sensor 0") == 0) {
+        sensor_set_enabled(false);
+        ble_manager_send_notify(">> Sensor DISABLED\n");
+        send_full_status();
+        return;
+    }
+    if (strncmp(p, "sens_thresh ", 12) == 0) {
+        sensor_set_threshold(atoi(p + 12));
+        send_full_status();
+        return;
+    }
+    if (strncmp(p, "sens_actions ", 13) == 0) {
+        char trip[32] = {0}, clear[32] = {0};
+        if (sscanf(p + 13, "%31s %31s", trip, clear) == 2) {
+            sensor_set_actions(trip, clear);
+        }
+        send_full_status();
+        return;
+    }
+    if (strncmp(p, "sens_audio ", 11) == 0) {
+        char atrip[32] = {0}, aclear[32] = {0};
+        if (sscanf(p + 11, "%31s %31s", atrip, aclear) == 2) {
+            sensor_set_audio_actions(atrip, aclear);
+        }
+        send_full_status();
+        return;
+    }
+
+    // 3. Individual Leg Adjustments & Hardware Calibration Trimming
+    int leg_ang = 0;
+    if (sscanf(p, "hl %d", &leg_ang) == 1) {
+        servo_set_target("high_left", leg_ang);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "hr %d", &leg_ang) == 1) {
+        servo_set_target("high_right", leg_ang);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "ll %d", &leg_ang) == 1) {
+        servo_set_target("low_left", leg_ang);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "lr %d", &leg_ang) == 1) {
+        servo_set_target("low_right", leg_ang);
+        send_full_status();
+        return;
+    }
+
+    int c_ll = 0, c_hr = 0, c_hl = 0, c_lr = 0;
+    if (sscanf(p, "cal_set offsets %d %d %d %d", &c_ll, &c_hr, &c_hl, &c_lr) == 4) {
+        servo_set_calibration("offsets", c_ll, c_hr, c_hl, c_lr, true);
+        ble_manager_send_notify(">> Offsets Saved to Flash\n");
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "offset ll %d", &c_ll) == 1) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        servo_set_calibration("offsets", c_ll, o_hr, o_hl, o_lr, true);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "offset hr %d", &c_hr) == 1) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        servo_set_calibration("offsets", o_ll, c_hr, o_hl, o_lr, true);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "offset hl %d", &c_hl) == 1) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        servo_set_calibration("offsets", o_ll, o_hr, c_hl, o_lr, true);
+        send_full_status();
+        return;
+    }
+    if (sscanf(p, "offset lr %d", &c_lr) == 1) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        servo_set_calibration("offsets", o_ll, o_hr, o_hl, c_lr, true);
+        send_full_status();
+        return;
+    }
+    if (strcmp(p, "cal_save") == 0) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        servo_set_calibration("offsets", o_ll, o_hr, o_hl, o_lr, true);
+        ble_manager_send_notify(">> Calibration saved to flash\n");
+        return;
+    }
+    if (strcmp(p, "cal_get") == 0) {
+        int o_ll, o_hr, o_hl, o_lr;
+        servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+        char reply[64];
+        snprintf(reply, sizeof(reply), "CAL:oll=%d,ohr=%d,ohl=%d,olr=%d\n", o_ll, o_hr, o_hl, o_lr);
+        ble_manager_send_notify(reply);
+        return;
+    }
+    if (strcmp(p, "cal_reset") == 0) {
+        servo_set_calibration("offsets", 0, 0, 0, 11, true);
+        ble_manager_send_notify(">> Calibration reset to defaults\n");
+        send_full_status();
+        return;
+    }
+
+    // 4. Switch Controller Button Mapping Persistence
     if (strncmp(p, "switchkey ", 10) == 0) {
         const char *arg = p + 10;
         while (*arg == ' ') arg++;
@@ -206,7 +321,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 3. Audio / HT517 Speaker Commands
+    // 5. Audio / HT517 Speaker Commands
     if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0) {
         audio_play("dog_bark");
         ble_manager_send_notify(">> Playing Dog Bark\n");
@@ -251,7 +366,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 4. Status and System Queries
+    // 6. Status and System Queries
     if (strcmp(p, "status") == 0) {
         send_full_status();
         return;
@@ -268,7 +383,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 5. Direct Integer Angle / Nudge
+    // 7. Direct Integer Angle / Nudge
     bool is_num = true;
     for (int i = 0; p[i] != '\0'; i++) {
         if (!isdigit((unsigned char)p[i])) { is_num = false; break; }
@@ -287,7 +402,7 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 6. JSON Object Parser (Handles App Action, Servo, and Sensor settings)
+    // 8. JSON Object Parser
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -307,7 +422,7 @@ static void process_ble_command(const char* raw_cmd) {
         if (!claw_ang) claw_ang = cJSON_GetObjectItem(json, "angle");
         if (claw_ang) claw_set_angle(claw_ang->valueint);
 
-        // Parse Ultrasonic Sensor Settings coming from the Frontend App
+        // Ultrasonic Sensor Settings
         cJSON *sen_en = cJSON_GetObjectItem(json, "sensor_enabled");
         if (sen_en) sensor_set_enabled(cJSON_IsTrue(sen_en) || sen_en->valueint != 0);
 
@@ -322,12 +437,25 @@ static void process_ble_command(const char* raw_cmd) {
         cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
         if (sen_atrip && sen_aclear) sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
 
+        // Calibration offsets JSON parsing
+        cJSON *cal_off = cJSON_GetObjectItem(json, "cal_offsets");
+        if (cal_off) {
+            cJSON *ll_o = cJSON_GetObjectItem(cal_off, "ll");
+            cJSON *hr_o = cJSON_GetObjectItem(cal_off, "hr");
+            cJSON *hl_o = cJSON_GetObjectItem(cal_off, "hl");
+            cJSON *lr_o = cJSON_GetObjectItem(cal_off, "lr");
+            if (ll_o && hr_o && hl_o && lr_o) {
+                servo_set_calibration("offsets", ll_o->valueint, hr_o->valueint, hl_o->valueint, lr_o->valueint, true);
+            }
+        }
+
         cJSON_Delete(json);
         ble_manager_send_notify(">> JSON Handled\n");
+        send_full_status();
         return;
     }
 
-    // 7. General Kinematic Actions (Walk, Stand, Sit, Leap, etc.)
+    // 9. General Kinematic Actions (Walk, Stand, Sit, Leap, etc.)
     if (is_claw_mode) {
         claw_execute_command(p);
     } else {
@@ -343,7 +471,7 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        char buf[128];
+        char buf[512]; // Expanded buffer to comfortably receive large JSON and calibration payloads
         if (om_len >= sizeof(buf)) {
             om_len = sizeof(buf) - 1;
         }
@@ -410,15 +538,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
                 active_conn_handle = event->connect.conn_handle;
                 is_ble_connected_flag = true;
                 ESP_LOGI(TAG, "BLE Client Connected! Connection Handle: %d", active_conn_handle);
-                
-                // Stop the local Web Server entirely to conserve battery/RAM 
-                // UNLESS a user device is physically connected to the ESP32's SoftAP.
-                wifi_sta_list_t clients;
-                if (esp_wifi_ap_get_sta_list(&clients) == ESP_OK && clients.num == 0) {
-                    ESP_LOGI(TAG, "No users on SoftAP. Stopping Web Server to save energy.");
-                    web_server_stop();
-                }
-
+                // Keep the Web Server active so SoftAP / Wi-Fi users are never locked out
                 send_full_status();
             } else {
                 active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -432,9 +552,6 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             is_ble_connected_flag = false;
             ble_advertise();
-            
-            ESP_LOGI(TAG, "Restoring Web Server fallback UI after BLE disconnect.");
-            web_server_start();
             break;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
