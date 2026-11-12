@@ -1,5 +1,4 @@
-
-// main/web_server.cpp
+// main\web_server.cpp
 #include "web_server.h"
 #include "web_html.h"
 #include "wifi_manager.h"
@@ -17,9 +16,10 @@
 #include "freertos/task.h"
 #include "nvs.h"
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "WEB";
-httpd_handle_t server = NULL;
+static httpd_handle_t server = NULL;
 
 extern bool is_claw_mode; 
 extern bool is_cam_mode; 
@@ -27,6 +27,11 @@ extern bool is_cam_mode;
 static void delayed_reboot_task(void *pvParameter) {
     vTaskDelay(pdMS_TO_TICKS(2000));
     esp_restart();
+    vTaskDelete(NULL);
+}
+
+void trigger_delayed_reboot(void) {
+    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
 }
 
 static esp_err_t index_get_handler(httpd_req_t *req);
@@ -154,7 +159,7 @@ static esp_err_t cam_flip_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-static esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
+esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
     *json_out = NULL;
     int total_len = req->content_len;
     if (total_len >= 512 || total_len <= 0) {
@@ -209,7 +214,7 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
                 nvs_close(my_handle);
             }
 
-            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+            trigger_delayed_reboot();
         }
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
@@ -226,7 +231,7 @@ static esp_err_t switch_ap_post_handler(httpd_req_t *req) {
         nvs_close(my_handle);
     }
     httpd_resp_sendstr(req, "OK");
-    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    trigger_delayed_reboot();
     return ESP_OK;
 }
 
@@ -239,7 +244,7 @@ static esp_err_t switch_wifi_post_handler(httpd_req_t *req) {
         nvs_close(my_handle);
     }
     httpd_resp_sendstr(req, "OK");
-    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    trigger_delayed_reboot();
     return ESP_OK;
 }
 
@@ -255,7 +260,7 @@ static esp_err_t switch_mode_post_handler(httpd_req_t *req) {
                 nvs_commit(my_handle);
                 nvs_close(my_handle);
             }
-            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+            trigger_delayed_reboot();
         }
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
@@ -592,7 +597,7 @@ static esp_err_t reset_cal_post_handler(httpd_req_t *req) {
         nvs_close(my_handle);
         ESP_LOGW(TAG, "NVS Storage Erased. Rebooting...");
     }
-    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    trigger_delayed_reboot();
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
 }
@@ -618,7 +623,7 @@ static esp_err_t log_clear_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-void web_server_init() {
+void web_server_init(void) {
     esp_log_level_set("httpd_uri", ESP_LOG_ERROR);
     esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
     esp_log_level_set("httpd_parse", ESP_LOG_ERROR);
@@ -754,5 +759,17 @@ void web_server_init() {
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }
+    }
+}
+
+void web_server_start(void) {
+    web_server_init();
+}
+
+void web_server_stop(void) {
+    if (server) {
+        httpd_stop(server);
+        server = NULL;
+        ESP_LOGI(TAG, "Web Server stopped.");
     }
 }
