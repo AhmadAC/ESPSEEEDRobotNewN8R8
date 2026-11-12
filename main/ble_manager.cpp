@@ -1,3 +1,4 @@
+
 // 11-3ESPSEEEDRobotNewN8R8/main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -24,7 +25,6 @@ static const char *DEVICE_NAME = "ESP32-Robot";
 extern bool is_claw_mode;
 extern bool is_cam_mode;
 
-// Nordic UART Service (NUS) 128-bit UUIDs (Little-Endian)
 static const ble_uuid128_t gatt_svr_svc_uart_uuid =
     BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
                      0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e);
@@ -111,14 +111,24 @@ static void send_full_status(void) {
 static void process_ble_command(const char* raw_cmd) {
     if (!raw_cmd) return;
 
-    // Trim leading whitespace
-    const char* p = raw_cmd;
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p == '\0') return;
+    char cmd_buf[256];
+    strncpy(cmd_buf, raw_cmd, sizeof(cmd_buf) - 1);
+    cmd_buf[sizeof(cmd_buf) - 1] = '\0';
 
+    char *start = cmd_buf;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
+    if (*start == '\0') return;
+
+    char *end = start + strlen(start) - 1;
+    while (end >= start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
+        *end = '\0';
+        end--;
+    }
+    if (*start == '\0') return;
+
+    const char* p = start;
     ESP_LOGI(TAG, "BLE Command Received: '%s'", p);
 
-    // 1. Wi-Fi Provisioning ("wifi:SSID,PASSWORD" or "w:SSID,PASSWORD")
     if (strncmp(p, "wifi:", 5) == 0 || strncmp(p, "w:", 2) == 0) {
         const char* creds = (strncmp(p, "wifi:", 5) == 0) ? (p + 5) : (p + 2);
         char* comma = strchr(creds, ',');
@@ -138,7 +148,6 @@ static void process_ble_command(const char* raw_cmd) {
         }
     }
 
-    // 2. Ultrasonic Sensor Direct Commands
     if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
         sensor_set_enabled(true);
         ble_manager_send_notify(">> Sensor ENABLED\n");
@@ -173,7 +182,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 3. Individual Leg Adjustments & Hardware Calibration Trimming
     int leg_ang = 0;
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
         servo_set_target("high_left", leg_ang);
@@ -236,6 +244,7 @@ static void process_ble_command(const char* raw_cmd) {
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
         servo_set_calibration("offsets", o_ll, o_hr, o_hl, o_lr, true);
         ble_manager_send_notify(">> Calibration saved to flash\n");
+        send_full_status();
         return;
     }
     if (strcmp(p, "cal_get") == 0) {
@@ -253,7 +262,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 4. Switch Controller Button Mapping Persistence
     if (strncmp(p, "switchkey ", 10) == 0) {
         const char *arg = p + 10;
         while (*arg == ' ') arg++;
@@ -321,7 +329,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 5. Audio / HT517 Speaker Commands
     if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0) {
         audio_play("dog_bark");
         ble_manager_send_notify(">> Playing Dog Bark\n");
@@ -366,7 +373,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 6. Status and System Queries
     if (strcmp(p, "status") == 0) {
         send_full_status();
         return;
@@ -383,7 +389,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 7. Direct Integer Angle / Nudge
     bool is_num = true;
     for (int i = 0; p[i] != '\0'; i++) {
         if (!isdigit((unsigned char)p[i])) { is_num = false; break; }
@@ -402,7 +407,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 8. JSON Object Parser
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -422,7 +426,6 @@ static void process_ble_command(const char* raw_cmd) {
         if (!claw_ang) claw_ang = cJSON_GetObjectItem(json, "angle");
         if (claw_ang) claw_set_angle(claw_ang->valueint);
 
-        // Ultrasonic Sensor Settings
         cJSON *sen_en = cJSON_GetObjectItem(json, "sensor_enabled");
         if (sen_en) sensor_set_enabled(cJSON_IsTrue(sen_en) || sen_en->valueint != 0);
 
@@ -437,7 +440,6 @@ static void process_ble_command(const char* raw_cmd) {
         cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
         if (sen_atrip && sen_aclear) sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
 
-        // Calibration offsets JSON parsing
         cJSON *cal_off = cJSON_GetObjectItem(json, "cal_offsets");
         if (cal_off) {
             cJSON *ll_o = cJSON_GetObjectItem(cal_off, "ll");
@@ -455,7 +457,6 @@ static void process_ble_command(const char* raw_cmd) {
         return;
     }
 
-    // 9. General Kinematic Actions (Walk, Stand, Sit, Leap, etc.)
     if (is_claw_mode) {
         claw_execute_command(p);
     } else {
@@ -471,7 +472,7 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        char buf[512]; // Expanded buffer to comfortably receive large JSON and calibration payloads
+        char buf[512];
         if (om_len >= sizeof(buf)) {
             om_len = sizeof(buf) - 1;
         }
@@ -479,11 +480,10 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
         int rc = ble_hs_mbuf_to_flat(ctxt->om, buf, om_len, NULL);
         if (rc == 0) {
             buf[om_len] = '\0';
-            while (om_len > 0 && (buf[om_len - 1] == '\r' || buf[om_len - 1] == '\n')) {
-                buf[--om_len] = '\0';
-            }
-            if (om_len > 0) {
-                process_ble_command(buf);
+            char *line = strtok(buf, "\r\n");
+            while (line != NULL) {
+                process_ble_command(line);
+                line = strtok(NULL, "\r\n");
             }
         }
     }
@@ -538,7 +538,6 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
                 active_conn_handle = event->connect.conn_handle;
                 is_ble_connected_flag = true;
                 ESP_LOGI(TAG, "BLE Client Connected! Connection Handle: %d", active_conn_handle);
-                // Keep the Web Server active so SoftAP / Wi-Fi users are never locked out
                 send_full_status();
             } else {
                 active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
