@@ -1,4 +1,3 @@
-
 // 11-3ESPSEEEDRobotNewN8R8/main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -68,7 +67,7 @@ bool ble_manager_is_connected(void) {
 }
 
 void ble_manager_send_notify(const char* message) {
-    if (!is_ble_connected_flag || !is_subscribed_flag || active_conn_handle == BLE_HS_CONN_HANDLE_NONE || s_tx_val_handle == 0 || message == NULL) {
+    if (!is_ble_connected_flag || active_conn_handle == BLE_HS_CONN_HANDLE_NONE || s_tx_val_handle == 0 || message == NULL) {
         return;
     }
     struct os_mbuf *om = ble_hs_mbuf_from_flat(message, strlen(message));
@@ -93,7 +92,7 @@ void ble_manager_send_status(const char* status_json) {
 }
 
 static void send_full_status(void) {
-    if (!is_ble_connected_flag || !is_subscribed_flag) {
+    if (!is_ble_connected_flag) {
         return;
     }
 
@@ -107,7 +106,7 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    // 1. Send dedicated sensor frame (under 25 bytes, guaranteed to pass CoreBluetooth)
+    // 1. Send dedicated sensor frame (under 25 bytes, guaranteed fit)
     char sens_short[48];
     snprintf(sens_short, sizeof(sens_short), "SENS:%.1f,%d,%ld\n",
              (double)sensor_get_distance(),
@@ -568,13 +567,11 @@ static void ble_cmd_worker_task(void *pvParameters) {
     TickType_t last_telemetry_tick = xTaskGetTickCount();
 
     while (1) {
-        // Wait up to 350ms for a command; if none, stream a fresh distance telemetry packet
         if (xQueueReceive(s_ble_cmd_queue, cmd_buf, pdMS_TO_TICKS(350)) == pdTRUE) {
             execute_ble_command(cmd_buf);
         }
 
-        // Active continuous streaming to iOS app when connected and subscribed
-        if (is_ble_connected_flag && is_subscribed_flag) {
+        if (is_ble_connected_flag) {
             TickType_t now = xTaskGetTickCount();
             if ((now - last_telemetry_tick) >= pdMS_TO_TICKS(350)) {
                 last_telemetry_tick = now;
@@ -616,8 +613,18 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
+// CRITICAL FIX: Permit direct reads on TX characteristic so Ble.read() returns telemetry data
 static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        char sens_data[64];
+        snprintf(sens_data, sizeof(sens_data), "SENS:%.1f,%d,%ld\n",
+                 (double)sensor_get_distance(),
+                 sensor_is_enabled() ? 1 : 0,
+                 (long)sensor_get_threshold());
+        int rc = os_mbuf_append(ctxt->om, sens_data, strlen(sens_data));
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     return 0;
 }
 
@@ -637,7 +644,8 @@ static const struct ble_gatt_chr_def gatt_svr_chrs[] = {
         .access_cb = gatt_svr_chr_access_tx,
         .arg = NULL,
         .descriptors = NULL,
-        .flags = BLE_GATT_CHR_F_NOTIFY,
+        // CRITICAL FIX: Add BLE_GATT_CHR_F_READ so Ble.read works directly
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
         .min_key_size = 0,
         .val_handle = &s_tx_val_handle,
         .cpfd = NULL,
@@ -791,5 +799,5 @@ void ble_manager_init(void) {
     }
 
     nimble_port_freertos_init(ble_host_task);
-    ESP_LOGI(TAG, "BLE Manager Initialized with active continuous telemetry stream.");
+    ESP_LOGI(TAG, "BLE Manager Initialized with READ + NOTIFY on TX Characteristic.");
 }
