@@ -219,6 +219,10 @@ async function sendCommand(commandText) {
   while (cmdQueue.length > 0) {
     const nextCmd = cmdQueue.shift();
     await executeSendCommand(nextCmd);
+    if (cmdQueue.length > 0) {
+      // 20ms safety pacing between BLE packets to prevent power surges
+      await new Promise(r => setTimeout(r, 20));
+    }
   }
   isProcessingQueue = false;
 }
@@ -269,7 +273,6 @@ async function executeSendCommand(commandText) {
 
       txCount++;
       updateCounterDisplay();
-      // Suppress logging of routine status commands to prevent console spam
       if (commandText !== "status") {
         appendLog("TX", commandText);
       }
@@ -372,7 +375,6 @@ function handleIncomingBleData(rawText, sourceTag = "BLE") {
       }
     }
 
-    // Filter continuous telemetry packets from flooding the console
     if (!text.startsWith("SENS:") && !text.startsWith("STATUS:") && !text.startsWith("ANG:")) {
       appendLog(sourceTag, text);
     }

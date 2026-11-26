@@ -226,15 +226,18 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Individual & Synchronized Leg Angles
+    // Individual & Synchronized Leg Angles with 20ms Stagger
     int leg_ang = 0;
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
         servo_set_target("high_left", leg_ang);
         if (ble_sync_front || ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_right", leg_ang);
         }
         if (ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_right", leg_ang);
         }
         send_full_status();
@@ -243,10 +246,13 @@ static void execute_ble_command(const char* p) {
     if (sscanf(p, "hr %d", &leg_ang) == 1) {
         servo_set_target("high_right", leg_ang);
         if (ble_sync_front || ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_left", leg_ang);
         }
         if (ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_right", leg_ang);
         }
         send_full_status();
@@ -255,10 +261,13 @@ static void execute_ble_command(const char* p) {
     if (sscanf(p, "ll %d", &leg_ang) == 1) {
         servo_set_target("low_left", leg_ang);
         if (ble_sync_back || ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_right", leg_ang);
         }
         if (ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_right", leg_ang);
         }
         send_full_status();
@@ -267,10 +276,13 @@ static void execute_ble_command(const char* p) {
     if (sscanf(p, "lr %d", &leg_ang) == 1) {
         servo_set_target("low_right", leg_ang);
         if (ble_sync_back || ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("low_left", leg_ang);
         }
         if (ble_sync_all) {
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(20));
             servo_set_target("high_right", leg_ang);
         }
         send_full_status();
@@ -281,6 +293,7 @@ static void execute_ble_command(const char* p) {
     int c_ll = 0, c_hr = 0, c_hl = 0, c_lr = 0;
     if (sscanf(p, "cal_set offsets %d %d %d %d", &c_ll, &c_hr, &c_hl, &c_lr) == 4) {
         servo_set_calibration("offsets", c_ll, c_hr, c_hl, c_lr, true);
+        vTaskDelay(pdMS_TO_TICKS(20));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Offsets Saved to Flash (Reset to 90 deg Stand Pose)\n");
         send_full_status();
@@ -330,6 +343,7 @@ static void execute_ble_command(const char* p) {
         int o_ll, o_hr, o_hl, o_lr;
         servo_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
         servo_set_calibration("offsets", o_ll, o_hr, o_hl, o_lr, true);
+        vTaskDelay(pdMS_TO_TICKS(20));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Calibration saved to flash (Reset to 90 deg Stand Pose)\n");
         send_full_status();
@@ -345,6 +359,7 @@ static void execute_ble_command(const char* p) {
     }
     if (strcmp(p, "cal_reset") == 0) {
         servo_set_calibration("offsets", 0, 0, 0, 11, true);
+        vTaskDelay(pdMS_TO_TICKS(20));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Calibration reset to defaults (90 deg Stand Pose)\n");
         send_full_status();
@@ -539,6 +554,7 @@ static void execute_ble_command(const char* p) {
             cJSON *lr_o = cJSON_GetObjectItem(cal_off, "lr");
             if (ll_o && hr_o && hl_o && lr_o) {
                 servo_set_calibration("offsets", ll_o->valueint, hr_o->valueint, hl_o->valueint, lr_o->valueint, true);
+                vTaskDelay(pdMS_TO_TICKS(20));
                 servo_set_action_bypass("stand");
             }
         }
@@ -613,7 +629,6 @@ static int gatt_svr_chr_access_rx(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
-// CRITICAL FIX: Permit direct reads on TX characteristic so Ble.read() returns telemetry data
 static int gatt_svr_chr_access_tx(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg) {
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
@@ -644,7 +659,6 @@ static const struct ble_gatt_chr_def gatt_svr_chrs[] = {
         .access_cb = gatt_svr_chr_access_tx,
         .arg = NULL,
         .descriptors = NULL,
-        // CRITICAL FIX: Add BLE_GATT_CHR_F_READ so Ble.read works directly
         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
         .min_key_size = 0,
         .val_handle = &s_tx_val_handle,

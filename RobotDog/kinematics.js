@@ -95,17 +95,24 @@ function onLegSlider(leg, val) {
   }
 
   if (!legThrottleTimer) {
-    legThrottleTimer = setTimeout(() => {
+    legThrottleTimer = setTimeout(async () => {
       legThrottleTimer = null;
-      for (const k in pendingLeg) sendCommand(pendingLeg[k]);
+      const cmds = Object.values(pendingLeg);
       pendingLeg = {};
+      for (let i = 0; i < cmds.length; i++) {
+        await sendCommand(cmds[i]);
+        if (i < cmds.length - 1) {
+          await new Promise(r => setTimeout(r, 20));
+        }
+      }
     }, 40);
   }
 }
 
-function nudgeLegAngle(leg, delta) {
+async function nudgeLegAngle(leg, delta) {
   const targetLegs = getSyncedLegs(leg);
-  targetLegs.forEach(k => {
+  for (let i = 0; i < targetLegs.length; i++) {
+    const k = targetLegs[i];
     let next = (legAngles[k] || 90) + delta;
     if (next < 0) next = 0; if (next > 180) next = 180;
     legAngles[k] = next;
@@ -113,14 +120,18 @@ function nudgeLegAngle(leg, delta) {
       const sl = document.getElementById(`${k}-slider`); if (sl) sl.value = next;
       const valEl = document.getElementById(`${k}-val`); if (valEl) valEl.innerText = `${next} deg`;
     }
-    sendCommand(`${k} ${next}`);
-  });
+    await sendCommand(`${k} ${next}`);
+    if (i < targetLegs.length - 1) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+  }
   try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
 }
 
-function adjustOffset(leg, delta) {
+async function adjustOffset(leg, delta) {
   const targetLegs = getSyncedLegs(leg);
-  targetLegs.forEach(k => {
+  for (let i = 0; i < targetLegs.length; i++) {
+    const k = targetLegs[i];
     legOffsets[k] = (legOffsets[k] || 0) + delta;
     if (legOffsets[k] < -45) legOffsets[k] = -45;
     if (legOffsets[k] > 45) legOffsets[k] = 45;
@@ -129,9 +140,12 @@ function adjustOffset(leg, delta) {
       const sl = document.getElementById(`${k}-slider`); if (sl) sl.value = legOffsets[k];
       const valEl = document.getElementById(`${k}-val`); if (valEl) valEl.innerText = `${legOffsets[k] > 0 ? '+' : ''}${legOffsets[k]}`;
     }
-    sendCommand(`offset ${k} ${legOffsets[k]}`);
+    await sendCommand(`offset ${k} ${legOffsets[k]}`);
     appendLog("Trim", `${k.toUpperCase()} Offset -> ${legOffsets[k]}`);
-  });
+    if (i < targetLegs.length - 1) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+  }
   try { localStorage.setItem("esp32_leg_offsets", JSON.stringify(legOffsets)); } catch (e) {}
 }
 
@@ -149,6 +163,7 @@ async function saveCalibrationOffsets() {
 
   const cmd = `cal_set offsets ${legOffsets.ll} ${legOffsets.hr} ${legOffsets.hl} ${legOffsets.lr}`;
   await sendCommand(cmd);
+  await new Promise(r => setTimeout(r, 40));
   await sendCommand("stand");
 
   if (isOffsetMode) toggleOffsetMode();
