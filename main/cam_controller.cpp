@@ -179,8 +179,10 @@ static void cam_espnow_task(void *pvParameters) {
                     esp_camera_fb_return(fb);
                 }
             }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

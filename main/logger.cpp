@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -17,38 +18,27 @@ static const char *LOG_PATH = "/spiffs/debug.log";
 static const char *LOG_PATH_OLD = "/spiffs/debug.log.old";
 static const size_t MAX_LOG_SIZE = 512 * 1024; // 512 KB per file
 
+#define LOG_QUEUE_LEN 48
+#define LOG_LINE_MAX  192
+
 static SemaphoreHandle_t log_mutex = NULL;
+static QueueHandle_t log_queue = NULL;
 static vprintf_like_t original_vprintf = NULL;
 static bool spiffs_mounted = false;
 
-static int file_vprintf(const char *fmt, va_list args) {
-    // 1. Always mirror to console (USB Serial/JTAG or UART)
-    va_list args_copy;
-    va_copy(args_copy, args);
-    int ret = 0;
-    if (original_vprintf) {
-        ret = original_vprintf(fmt, args_copy);
-    } else {
-        ret = vprintf(fmt, args_copy);
-    }
-    va_end(args_copy);
+static void flush_log_queue(void) {
+    if (!spiffs_mounted || log_queue == NULL || log_mutex == NULL) return;
+    if (uxQueueMessagesWaiting(log_queue) == 0) return;
 
-    // 2. Prevent writing to flash from interrupt service routines or timer service tasks
-    if (xPortInIsrContext() || !spiffs_mounted || log_mutex == NULL) {
-        return ret;
-    }
-
-    // Timer tasks (Tmr Svc / esp_timer) have very small stacks; skip flash I/O inside them
-    const char *task_name = pcTaskGetName(NULL);
-    if (task_name && (strcmp(task_name, "Tmr Svc") == 0 || strcmp(task_name, "esp_timer") == 0)) {
-        return ret;
-    }
-
-    // 3. Acquire mutex with a short timeout to prevent blocking real-time tasks
-    if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(30)) == pdTRUE) {
+    if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
         FILE *f = fopen(LOG_PATH, "a");
         if (f) {
-            vfprintf(f, fmt, args);
+            char line[LOG_LINE_MAX];
+            int written = 0;
+            while (written < LOG_QUEUE_LEN && xQueueReceive(log_queue, line, 0) == pdTRUE) {
+                fputs(line, f);
+                written++;
+            }
             fflush(f);
 
             long cur_pos = ftell(f);
@@ -62,12 +52,58 @@ static int file_vprintf(const char *fmt, va_list args) {
         }
         xSemaphoreGive(log_mutex);
     }
+}
+
+static void logger_writer_task(void *pvParameters) {
+    char peek_buf[LOG_LINE_MAX];
+    while (1) {
+        if (xQueuePeek(log_queue, peek_buf, portMAX_DELAY) == pdTRUE) {
+            // Coalesce burst log events into a single SPIFFS flash write
+            vTaskDelay(pdMS_TO_TICKS(250));
+            flush_log_queue();
+        }
+    }
+}
+
+static int file_vprintf(const char *fmt, va_list args) {
+    // 1. Always mirror immediately to console (USB Serial/JTAG or UART)
+    va_list args_console;
+    va_copy(args_console, args);
+    int ret = 0;
+    if (original_vprintf) {
+        ret = original_vprintf(fmt, args_console);
+    } else {
+        ret = vprintf(fmt, args_console);
+    }
+    va_end(args_console);
+
+    // 2. Skip flash queuing from ISRs or small-stack timer tasks
+    if (xPortInIsrContext() || !spiffs_mounted || log_queue == NULL) {
+        return ret;
+    }
+
+    const char *task_name = pcTaskGetName(NULL);
+    if (task_name && (strcmp(task_name, "Tmr Svc") == 0 || strcmp(task_name, "esp_timer") == 0)) {
+        return ret;
+    }
+
+    // 3. Format into stack buffer and enqueue non-blockingly (0-tick wait)
+    char line[LOG_LINE_MAX];
+    int len = vsnprintf(line, sizeof(line), fmt, args);
+    if (len > 0) {
+        if (len >= (int)sizeof(line)) {
+            line[sizeof(line) - 2] = '\n';
+            line[sizeof(line) - 1] = '\0';
+        }
+        xQueueSend(log_queue, line, 0);
+    }
 
     return ret;
 }
 
 esp_err_t logger_init(void) {
     log_mutex = xSemaphoreCreateMutex();
+    log_queue = xQueueCreate(LOG_QUEUE_LEN, LOG_LINE_MAX);
 
     esp_vfs_spiffs_conf_t conf = {
         .base_path = "/spiffs",
@@ -99,9 +135,13 @@ esp_err_t logger_init(void) {
         xSemaphoreGive(log_mutex);
     }
 
+    if (log_queue != NULL) {
+        xTaskCreatePinnedToCore(logger_writer_task, "logger_task", 3072, NULL, 1, NULL, 1);
+    }
+
     // Hook the ESP-IDF logging system
     original_vprintf = esp_log_set_vprintf(file_vprintf);
-    ESP_LOGI(TAG, "Persistent file logging active (/spiffs/debug.log)");
+    ESP_LOGI(TAG, "Async persistent file logging active (/spiffs/debug.log)");
 
     return ESP_OK;
 }
@@ -111,6 +151,8 @@ void logger_print_all(void) {
         printf("[LOGGER] Flash logging is not initialized.\n");
         return;
     }
+
+    flush_log_queue();
 
     if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         FILE *f = fopen(LOG_PATH, "r");
@@ -139,6 +181,8 @@ void logger_print_tail(int lines) {
 
     if (lines <= 0) lines = 50;
 
+    flush_log_queue();
+
     if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         FILE *f = fopen(LOG_PATH, "r");
         if (!f) {
@@ -147,7 +191,6 @@ void logger_print_tail(int lines) {
             return;
         }
 
-        // Count total lines
         int total_lines = 0;
         char buf[256];
         while (fgets(buf, sizeof(buf), f)) {
@@ -175,6 +218,10 @@ void logger_print_tail(int lines) {
 void logger_clear(void) {
     if (!spiffs_mounted || log_mutex == NULL) return;
 
+    if (log_queue != NULL) {
+        xQueueReset(log_queue);
+    }
+
     if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         unlink(LOG_PATH);
         unlink(LOG_PATH_OLD);
@@ -189,6 +236,7 @@ void logger_clear(void) {
 }
 
 size_t logger_get_size(void) {
+    flush_log_queue();
     struct stat st;
     if (stat(LOG_PATH, &st) == 0) {
         return (size_t)st.st_size;
@@ -205,6 +253,8 @@ esp_err_t logger_http_stream(void *http_req) {
         return ESP_OK;
     }
 
+    flush_log_queue();
+
     if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         FILE *f = fopen(LOG_PATH, "r");
         if (!f) {
@@ -218,7 +268,7 @@ esp_err_t logger_http_stream(void *http_req) {
         while ((bytes_read = fread(chunk, 1, sizeof(chunk), f)) > 0) {
             httpd_resp_send_chunk(req, chunk, bytes_read);
         }
-        httpd_resp_send_chunk(req, NULL, 0); // End chunking
+        httpd_resp_send_chunk(req, NULL, 0);
         fclose(f);
         xSemaphoreGive(log_mutex);
     }

@@ -542,8 +542,9 @@ void servo_controller_init() {
 
     servo_auto_relax_timer = xTimerCreate("srv_relax", pdMS_TO_TICKS(4000), pdFALSE, NULL, servo_relax_timer_cb);
 
-    xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
-    ESP_LOGI(TAG, "Servo Controller Ready (Completely Dormant on boot, zero power)");
+    // Pin to Core 1 so Core 0 stays dedicated to BLE/Wi-Fi radio stacks
+    xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 1);
+    ESP_LOGI(TAG, "Servo Controller Ready (Completely Dormant on boot, Core 1)");
 }
 
 void servo_set_target(const char* id, int angle) {
@@ -717,10 +718,10 @@ void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, b
                     nvs_handle_t my_handle;
                     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
                         char key[16];
-                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].ll);
-                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hr);
-                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hl);
-                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].lr);
+                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].ll);
+                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hr);
+                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hl);
+                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].lr);
                         nvs_commit(my_handle);
                         nvs_close(my_handle);
                     }

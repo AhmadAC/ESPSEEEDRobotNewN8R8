@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 520" width="100%" height="100%">
+  <defs>
+    <!-- Background Shadow -->
+    <filter id="robot-shadow" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+    <filter id="inner-shadow">
+      <feOffset dx="0" dy="2"/>
+      <feGaussianBlur stdDeviation="2" result="offset-blur"/>
+      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
+      <feFlood flood-color="#000" flood-opacity="0.5" result="color"/>
+      <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
+      <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+    </filter>
+
+    <!-- Red PLA Gradients -->
+    <linearGradient id="redChassisGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ea2c34"/>
+      <stop offset="25%" stop-color="#d92027"/>
+      <stop offset="85%" stop-color="#b8151c"/>
+      <stop offset="100%" stop-color="#9a0e14"/>
+    </linearGradient>
+
+    <linearGradient id="topChamferGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff5961"/>
+      <stop offset="100%" stop-color="#d92027"/>
+    </linearGradient>
+
+    <linearGradient id="lowerTorsoGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c41920"/>
+      <stop offset="100%" stop-color="#8e0a10"/>
+    </linearGradient>
+
+    <!-- Orange Leg Gradients -->
+    <linearGradient id="orangeLegGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff7f16"/>
+      <stop offset="40%" stop-color="#f26400"/>
+      <stop offset="100%" stop-color="#c94e00"/>
+    </linearGradient>
+
+    <linearGradient id="orangeLegBackGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#d45700"/>
+      <stop offset="100%" stop-color="#a63e00"/>
+    </linearGradient>
+
+    <!-- Translucent Blue Servo Plastic -->
+    <linearGradient id="blueServoGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f78f0" stop-opacity="0.95"/>
+      <stop offset="45%" stop-color="#1251b5" stop-opacity="0.85"/>
+      <stop offset="85%" stop-color="#0a3580" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#1864d4" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Ultrasonic Metal Bezel Gradient -->
+    <linearGradient id="chromeBezel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8f9fa"/>
+      <stop offset="25%" stop-color="#b0b5bc"/>
+      <stop offset="48%" stop-color="#ffffff"/>
+      <stop offset="72%" stop-color="#7a818c"/>
+      <stop offset="100%" stop-color="#dce0e6"/>
+    </linearGradient>
+
+    <!-- Eye Mesh / Grill Pattern -->
+    <pattern id="grillMesh" width="4" height="4" patternUnits="userSpaceOnUse">
+      <path d="M0 2 L4 2 M2 0 L2 4" stroke="#181818" stroke-width="0.8"/>
+      <circle cx="2" cy="2" r="0.8" fill="#444850"/>
+    </pattern>
+
+    <!-- Transducer Center Cone -->
+    <radialGradient id="transducerCone" cx="40%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#bcc2c9"/>
+      <stop offset="70%" stop-color="#555d68"/>
+      <stop offset="100%" stop-color="#1d2127"/>
+    </radialGradient>
+
+    <!-- 3D Print Layer Pattern (Subtle) -->
+    <pattern id="printLayers" width="100" height="2" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="1" x2="100" y2="1" stroke="#ffffff" stroke-opacity="0.04" stroke-width="0.75"/>
+      <line x1="0" y1="2" x2="100" y2="2" stroke="#000000" stroke-opacity="0.06" stroke-width="0.75"/>
+    </pattern>
+
+    <!-- Screw Metal Gradient -->
+    <radialGradient id="screwMetal" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#9ea4ab"/>
+      <stop offset="100%" stop-color="#50555c"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ROBOT ASSEMBLY -->
+  <g filter="url(#robot-shadow)">
+    
+    <!-- 1. BACK LEGS (DEPTH) -->
+    <g id="back-legs">
+      <!-- Back Left Leg -->
+      <rect x="150" y="270" width="34" height="150" rx="8" fill="url(#orangeLegBackGrad)"/>
+      <!-- Back Right Leg -->
+      <rect x="416" y="270" width="34" height="150" rx="8" fill="url(#orangeLegBackGrad)"/>
+    </g>
+
+    <!-- 2. SERVO MOTORS (SG90) -->
+    <g id="servos">
+      <!-- Left Servo -->
+      <g id="servo-left">
+        <!-- Main Blue Body -->
+        <rect x="126" y="238" width="58" height="52" rx="4" fill="url(#blueServoGrad)" stroke="#092a6b" stroke-width="1.5"/>
+        <!-- Inner Gear Silhouette Hint -->
+        <circle cx="148" cy="262" r="14" fill="#ffffff" fill-opacity="0.12"/>
+        <circle cx="166" cy="254" r="8" fill="#ffffff" fill-opacity="0.15"/>
+        <!-- White/Translucent Shaft Hub -->
+        <rect x="121" y="254" width="7" height="18" rx="2" fill="#e8edf5"/>
+        <!-- Mounting Screw -->
+        <circle cx="168" cy="265" r="3.2" fill="url(#screwMetal)"/>
+        <line x1="166" y1="265" x2="170" y2="265" stroke="#333" stroke-width="0.8"/>
+        <line x1="168" y1="263" x2="168" y2="267" stroke="#333" stroke-width="0.8"/>
+      </g>
+
+      <!-- Right Servo -->
+      <g id="servo-right">
+        <!-- Main Blue Body -->
+        <rect x="416" y="238" width="58" height="52" rx="4" fill="url(#blueServoGrad)" stroke="#092a6b" stroke-width="1.5"/>
+        <!-- Inner Gear Silhouette Hint -->
+        <circle cx="452" cy="262" r="14" fill="#ffffff" fill-opacity="0.12"/>
+        <circle cx="434" cy="254" r="8" fill="#ffffff" fill-opacity="0.15"/>
+        <!-- White/Translucent Shaft Hub -->
+        <rect x="472" y="254" width="7" height="18" rx="2" fill="#e8edf5"/>
+        <!-- Mounting Screw -->
+        <circle cx="432" cy="265" r="3.2" fill="url(#screwMetal)"/>
+        <line x1="430" y1="265" x2="434" y2="265" stroke="#333" stroke-width="0.8"/>
+        <line x1="432" y1="263" x2="432" y2="267" stroke="#333" stroke-width="0.8"/>
+      </g>
+    </g>
+
+    <!-- 3. LOWER STEPPED TORSO / CHIN -->
+    <g id="lower-torso">
+      <path d="M 180,230 L 420,230 L 420,300 A 10,10 0 0 1 410,310 L 190,310 A 10,10 0 0 1 180,300 Z" 
+            fill="url(#lowerTorsoGrad)"/>
+      <!-- Lower Chin Layer Overlay -->
+      <rect x="180" y="230" width="240" height="80" rx="6" fill="url(#printLayers)"/>
+      <!-- Bottom Lip Bevel -->
+      <line x1="190" y1="309" x2="410" y2="309" stroke="#5a0508" stroke-width="2"/>
+    </g>
+
+    <!-- 4. MAIN HEAD CHASSIS -->
+    <g id="main-chassis">
+      <!-- Main Upper Rectangular Shell with Rounded Corners -->
+      <rect x="80" y="80" width="440" height="162" rx="14" fill="url(#redChassisGrad)"/>
+
+      <!-- Top Surface Chamfer Accent -->
+      <path d="M 85,94 Q 85,84 96,84 L 504,84 Q 515,84 515,94 L 515,98 Q 504,92 494,92 L 106,92 Q 95,92 85,98 Z" 
+            fill="url(#topChamferGrad)" opacity="0.8"/>
+
+      <!-- 3D Print Texture on Face -->
+      <rect x="80" y="80" width="440" height="162" rx="14" fill="url(#printLayers)"/>
+
+      <!-- Subtle Body Inset Line / Split line of Front Shell -->
+      <path d="M 82,145 L 180,145 M 420,145 L 518,145" stroke="#850c12" stroke-width="1.5" stroke-dasharray="1,1"/>
+    </g>
+
+    <!-- 5. EYES (ULTRASONIC SENSOR HC-SR04) -->
+    <!-- Left Eye -->
+    <g id="eye-left" transform="translate(205, 162)">
+      <!-- Outer Cutout Shadow into Red Plastic -->
+      <circle cx="0" cy="0" r="54" fill="#660a0e" opacity="0.6"/>
+      <!-- Metallic Silver Bezel Rim -->
+      <circle cx="0" cy="0" r="52" fill="url(#chromeBezel)" stroke="#6d737d" stroke-width="1"/>
+      <circle cx="0" cy="0" r="49" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.8"/>
+      <!-- Inner Deep Chamber -->
+      <circle cx="0" cy="0" r="44" fill="#0d0f12"/>
+      <!-- Mesh Grill -->
+      <circle cx="0" cy="0" r="43.5" fill="url(#grillMesh)"/>
+      <circle cx="0" cy="0" r="43.5" fill="#000000" fill-opacity="0.35"/>
+      <!-- Inner Transducer Cone & Reflection -->
+      <circle cx="0" cy="0" r="16" fill="url(#transducerCone)"/>
+      <circle cx="-3" cy="-3" r="5" fill="#ffffff" fill-opacity="0.65" filter="blur(1px)"/>
+      <circle cx="0" cy="0" r="16" fill="none" stroke="#3a4049" stroke-width="1"/>
+      <!-- Glass Rim Glint -->
+      <path d="M -32,-30 A 44,44 0 0 1 30,-32" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    </g>
+
+    <!-- Right Eye -->
+    <g id="eye-right" transform="translate(395, 162)">
+      <!-- Outer Cutout Shadow into Red Plastic -->
+      <circle cx="0" cy="0" r="54" fill="#660a0e" opacity="0.6"/>
+      <!-- Metallic Silver Bezel Rim -->
+      <circle cx="0" cy="0" r="52" fill="url(#chromeBezel)" stroke="#6d737d" stroke-width="1"/>
+      <circle cx="0" cy="0" r="49" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.8"/>
+      <!-- Inner Deep Chamber -->
+      <circle cx="0" cy="0" r="44" fill="#0d0f12"/>
+      <!-- Mesh Grill -->
+      <circle cx="0" cy="0" r="43.5" fill="url(#grillMesh)"/>
+      <circle cx="0" cy="0" r="43.5" fill="#000000" fill-opacity="0.35"/>
+      <!-- Inner Transducer Cone & Reflection -->
+      <circle cx="0" cy="0" r="16" fill="url(#transducerCone)"/>
+      <circle cx="-3" cy="-3" r="5" fill="#ffffff" fill-opacity="0.65" filter="blur(1px)"/>
+      <circle cx="0" cy="0" r="16" fill="none" stroke="#3a4049" stroke-width="1"/>
+      <!-- Glass Rim Glint -->
+      <path d="M -32,-30 A 44,44 0 0 1 30,-32" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    </g>
+
+    <!-- 6. DEBOSSED SMILE -->
+    <g id="smile">
+      <!-- Shadow Groove (Inner dark cut) -->
+      <path d="M 270,188 Q 300,208 330,188" 
+            fill="none" stroke="#52070a" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- Lower Bevel Highlight -->
+      <path d="M 270,190 Q 300,210 330,190" 
+            fill="none" stroke="#ff7278" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>
+    </g>
+
+    <!-- 7. FRONT ORANGE LEGS -->
+    <g id="front-legs">
+      <!-- Front Left Leg -->
+      <g id="front-left-leg">
+        <rect x="90" y="246" width="38" height="162" rx="10" fill="url(#orangeLegGrad)" stroke="#b53e00" stroke-width="1.5"/>
+        <rect x="90" y="246" width="38" height="162" rx="10" fill="url(#printLayers)"/>
+        
+        <!-- Servo Linkage Screw Top -->
+        <circle cx="109" cy="265" r="7" fill="url(#screwMetal)" stroke="#3e4349" stroke-width="1"/>
+        <line x1="105" y1="265" x2="113" y2="265" stroke="#222" stroke-width="1.5"/>
+        <line x1="109" y1="261" x2="109" y2="269" stroke="#222" stroke-width="1.5"/>
+
+        <!-- Lower Leg Screw -->
+        <circle cx="109" cy="318" r="4.5" fill="url(#screwMetal)" stroke="#3e4349" stroke-width="0.8"/>
+        <line x1="106.5" y1="318" x2="111.5" y2="318" stroke="#222" stroke-width="1"/>
+        <line x1="109" y1="315.5" x2="109" y2="320.5" stroke="#222" stroke-width="1"/>
+      </g>
+
+      <!-- Front Right Leg -->
+      <g id="front-right-leg">
+        <rect x="472" y="246" width="38" height="162" rx="10" fill="url(#orangeLegGrad)" stroke="#b53e00" stroke-width="1.5"/>
+        <rect x="472" y="246" width="38" height="162" rx="10" fill="url(#printLayers)"/>
+        
+        <!-- Servo Linkage Screw Top -->
+        <circle cx="491" cy="265" r="7" fill="url(#screwMetal)" stroke="#3e4349" stroke-width="1"/>
+        <line x1="487" y1="265" x2="495" y2="265" stroke="#222" stroke-width="1.5"/>
+        <line x1="491" y1="261" x2="491" y2="269" stroke="#222" stroke-width="1.5"/>
+
+        <!-- Lower Leg Screw -->
+        <circle cx="491" cy="318" r="4.5" fill="url(#screwMetal)" stroke="#3e4349" stroke-width="0.8"/>
+        <line x1="488.5" y1="318" x2="493.5" y2="318" stroke="#222" stroke-width="1"/>
+        <line x1="491" y1="315.5" x2="491" y2="320.5" stroke="#222" stroke-width="1"/>
+      </g>
+    </g>
+
+  </g>
+</svg>
