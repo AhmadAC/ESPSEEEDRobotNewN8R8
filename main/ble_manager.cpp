@@ -373,13 +373,21 @@ static void execute_ble_command(const char* p) {
         ble_manager_send_notify(">> Audio Stopped\n");
         return;
     }
+    
+    // CRITICAL FIX: Separated 'if' statements to prevent -Werror=misleading-indentation
     if (strncmp(p, "vol ", 4) == 0 || strncmp(p, "volume ", 7) == 0) {
         const char *v_str = (strncmp(p, "vol ", 4) == 0) ? (p + 4) : (p + 7);
         while (*v_str == ' ') v_str++;
         int tv = (v_str[0] == '+' || v_str[0] == '-') ? (audio_get_volume() + atoi(v_str)) : atoi(v_str);
-        if (tv < 0) tv = 0; if (tv > 100) tv = 100;
+        if (tv < 0) {
+            tv = 0;
+        }
+        if (tv > 100) {
+            tv = 100;
+        }
         audio_set_volume(tv);
-        char msg[64]; snprintf(msg, sizeof(msg), ">> Volume: %d%%\n", tv);
+        char msg[64];
+        snprintf(msg, sizeof(msg), ">> Volume: %d%%\n", tv);
         ble_manager_send_notify(msg);
         send_full_status();
         return;
@@ -487,15 +495,53 @@ static int gatt_svr_chr_access_tx(uint16_t conn, uint16_t attr, struct ble_gatt_
     return 0;
 }
 
+// CRITICAL FIX: Added explicit NULL/0 initializers to prevent -Wmissing-field-initializers warnings
 static const struct ble_gatt_chr_def gatt_svr_chrs[] = {
-    { .uuid = &gatt_svr_chr_rx_uuid.u, .access_cb = gatt_svr_chr_access_rx, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP },
-    { .uuid = &gatt_svr_chr_tx_uuid.u, .access_cb = gatt_svr_chr_access_tx, .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_tx_val_handle },
-    {}
+    {
+        .uuid = &gatt_svr_chr_rx_uuid.u,
+        .access_cb = gatt_svr_chr_access_rx,
+        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+        .arg = NULL,
+        .descriptors = NULL,
+        .min_key_size = 0,
+        .val_handle = NULL,
+        .cpfd = NULL
+    },
+    {
+        .uuid = &gatt_svr_chr_tx_uuid.u,
+        .access_cb = gatt_svr_chr_access_tx,
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+        .arg = NULL,
+        .descriptors = NULL,
+        .min_key_size = 0,
+        .val_handle = &s_tx_val_handle,
+        .cpfd = NULL
+    },
+    {
+        .uuid = NULL,
+        .access_cb = NULL,
+        .flags = 0,
+        .arg = NULL,
+        .descriptors = NULL,
+        .min_key_size = 0,
+        .val_handle = NULL,
+        .cpfd = NULL
+    }
 };
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
-    { .type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &gatt_svr_svc_uart_uuid.u, .characteristics = gatt_svr_chrs },
-    {}
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &gatt_svr_svc_uart_uuid.u,
+        .characteristics = gatt_svr_chrs,
+        .includes = NULL
+    },
+    {
+        .type = 0,
+        .uuid = NULL,
+        .characteristics = NULL,
+        .includes = NULL
+    }
 };
 
 static void ble_advertise(void);
