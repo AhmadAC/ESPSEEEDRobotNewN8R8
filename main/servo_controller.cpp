@@ -801,10 +801,10 @@ void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, b
                     nvs_handle_t my_handle;
                     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
                         char key[16];
-                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, poses[i].ll);
-                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, poses[i].hr);
-                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, poses[i].hl);
-                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, poses[i].lr);
+                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].ll);
+                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hr);
+                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hl);
+                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].lr);
                         nvs_commit(my_handle);
                         nvs_close(my_handle);
                     }
