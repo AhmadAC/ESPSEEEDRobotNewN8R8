@@ -186,14 +186,15 @@ function onConnectedSuccess(name) {
 
   setTimeout(() => {
     sendCommand("status");
-    setTimeout(() => sendCommand("cal_get"), 250);
-    setTimeout(() => sendCommand("getswitchkeys"), 500);
+    setTimeout(() => sendCommand("cal_get"), 200);
+    setTimeout(() => sendCommand("gethw"), 400);
+    setTimeout(() => sendCommand("getswitchkeys"), 600);
     setTimeout(() => {
       if (typeof syncSensorToRobot === "function") {
         syncSensorToRobot();
       }
-    }, 750);
-  }, 500);
+    }, 850);
+  }, 400);
 
   startActivePolling();
 }
@@ -220,7 +221,6 @@ async function sendCommand(commandText) {
     const nextCmd = cmdQueue.shift();
     await executeSendCommand(nextCmd);
     if (cmdQueue.length > 0) {
-      // 20ms safety pacing between BLE packets to prevent power surges
       await new Promise(r => setTimeout(r, 20));
     }
   }
@@ -273,7 +273,7 @@ async function executeSendCommand(commandText) {
 
       txCount++;
       updateCounterDisplay();
-      if (commandText !== "status") {
+      if (commandText !== "status" && !commandText.startsWith("get")) {
         appendLog("TX", commandText);
       }
 
@@ -286,7 +286,7 @@ async function executeSendCommand(commandText) {
 
       txCount++;
       updateCounterDisplay();
-      if (commandText !== "status") {
+      if (commandText !== "status" && !commandText.startsWith("get")) {
         appendLog("TX", commandText);
       }
     }
@@ -324,14 +324,14 @@ function universalBleDecode(val) {
           hexDecoded += String.fromCharCode(charCode);
         }
       }
-      if (hexDecoded && (/^[\x20-\x7E\r\n\t]+$/.test(hexDecoded) || hexDecoded.includes("SENS:") || hexDecoded.includes("STATUS:") || hexDecoded.includes("ANG:") || hexDecoded.includes("CAL:") || hexDecoded.includes(">>"))) {
+      if (hexDecoded && (/^[\x20-\x7E\r\n\t]+$/.test(hexDecoded) || hexDecoded.includes("SENS:") || hexDecoded.includes("STATUS:") || hexDecoded.includes("ANG:") || hexDecoded.includes("CAL:") || hexDecoded.includes("HWPINS:") || hexDecoded.includes("HWNAMES:"))) {
         return hexDecoded;
       }
     }
 
     try {
       const b64Decoded = atob(raw);
-      if (b64Decoded && (/^[\x20-\x7E\r\n\t]+$/.test(b64Decoded) || b64Decoded.includes("SENS:") || b64Decoded.includes("STATUS:") || b64Decoded.includes("ANG:") || b64Decoded.includes("CAL:"))) {
+      if (b64Decoded && (/^[\x20-\x7E\r\n\t]+$/.test(b64Decoded) || b64Decoded.includes("SENS:") || b64Decoded.includes("STATUS:") || b64Decoded.includes("ANG:") || b64Decoded.includes("CAL:") || b64Decoded.includes("HWPINS:") || b64Decoded.includes("HWNAMES:"))) {
         return b64Decoded;
       }
     } catch (e) {}
@@ -363,19 +363,7 @@ function handleIncomingBleData(rawText, sourceTag = "BLE") {
     let text = line.trim();
     if (!text) return;
 
-    const lineHexClean = text.replace(/[\s:]+/g, "");
-    if (/^[0-9a-fA-F]{4,}$/.test(lineHexClean) && lineHexClean.length % 2 === 0) {
-      let candidate = "";
-      for (let i = 0; i < lineHexClean.length; i += 2) {
-        const code = parseInt(lineHexClean.substring(i, i + 2), 16);
-        if (code !== 0) candidate += String.fromCharCode(code);
-      }
-      if (candidate.includes("SENS:") || candidate.includes("STATUS:") || candidate.includes("ANG:") || candidate.includes("CAL:") || candidate.includes(">>")) {
-        text = candidate.trim();
-      }
-    }
-
-    if (!text.startsWith("SENS:") && !text.startsWith("STATUS:") && !text.startsWith("ANG:")) {
+    if (!text.startsWith("SENS:") && !text.startsWith("STATUS:") && !text.startsWith("ANG:") && !text.startsWith("HWPINS:") && !text.startsWith("HWNAMES:")) {
       appendLog(sourceTag, text);
     }
 
@@ -396,6 +384,16 @@ function handleIncomingBleData(rawText, sourceTag = "BLE") {
       if (parts.length >= 4 && !isOffsetMode) {
         applyReceivedAngles(parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10), parseInt(parts[3], 10));
       }
+      return;
+    }
+
+    if (text.startsWith("HWPINS:")) {
+      applyReceivedHardwarePins(text);
+      return;
+    }
+
+    if (text.startsWith("HWNAMES:")) {
+      applyReceivedHardwareNames(text);
       return;
     }
 
@@ -449,6 +447,7 @@ function appendLog(sender, text) {
   if (sender === "TX") senderColor = "#fbbf24";
   if (sender === "Obstacle") senderColor = "#f43f5e";
   if (sender === "Sensor") senderColor = "#a855f7";
+  if (sender === "Config") senderColor = "#38bdf8";
 
   div.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[${time}]</span> <span style="color:${senderColor}; font-weight:700;">${sender}:</span> <span>${escapeHtml(text)}</span>`;
   term.appendChild(div);

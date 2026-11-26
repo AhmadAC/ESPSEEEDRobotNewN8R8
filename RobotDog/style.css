@@ -225,3 +225,69 @@ input[type=range].offset-slider::-webkit-slider-thumb {
   transform: translateX(-50%) translateY(0);
   opacity: 1;
 }
+
+/* Modal Window Styles */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(2, 6, 23, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 14px;
+}
+
+.modal-dialog {
+  background: #0f172a;
+  border: 1px solid #38bdf8;
+  box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-sec-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.modal-label {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.7);
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+
+.modal-input {
+  width: 100%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #ffffff;
+  outline: none;
+  font-family: monospace;
+}
+
+.modal-input:focus {
+  border-color: #38bdf8;
+}

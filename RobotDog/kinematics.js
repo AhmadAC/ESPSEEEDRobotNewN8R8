@@ -1,6 +1,25 @@
 let legAngles = { hl: 90, hr: 90, ll: 90, lr: 90 };
 let legOffsets = { hl: 0, hr: 0, ll: 0, lr: 11 };
 
+let legNames = {
+  hl: "Front Left (HL)",
+  hr: "Front Right (HR)",
+  ll: "Back Left (LL)",
+  lr: "Back Right (LR)"
+};
+
+let hardwarePins = {
+  srv_ll: 1,
+  srv_hr: 2,
+  srv_hl: 3,
+  srv_lr: 4,
+  sens_trig: 5,
+  sens_echo: 6,
+  aud_bclk: 10,
+  aud_lrc: 11,
+  aud_din: 12
+};
+
 let syncFrontActive = false;
 let syncBackActive = false;
 let syncAllActive = false;
@@ -15,6 +34,10 @@ function initLegStorage() {
     if (off) legOffsets = Object.assign(legOffsets, JSON.parse(off));
     const ang = localStorage.getItem("esp32_leg_angles");
     if (ang) legAngles = Object.assign(legAngles, JSON.parse(ang));
+    const nms = localStorage.getItem("esp32_leg_names");
+    if (nms) legNames = Object.assign(legNames, JSON.parse(nms));
+    const pins = localStorage.getItem("esp32_hw_pins");
+    if (pins) hardwarePins = Object.assign(hardwarePins, JSON.parse(pins));
   } catch (e) {}
   updateAllLegUI();
 }
@@ -26,14 +49,14 @@ function updateAllLegUI() {
 
     const sl = document.getElementById(`${k}-slider`);
     const hdrEl = document.getElementById(`${k}-header`);
-    const legNames = { hl: "Front Left (HL)", hr: "Front Right (HR)", ll: "Back Left (LL)", lr: "Back Right (LR)" };
+    const displayName = legNames[k] || k.toUpperCase();
 
     if (isOffsetMode) {
       if (sl) { sl.classList.add("offset-slider"); sl.min = "-45"; sl.max = "45"; sl.value = legOffsets[k]; }
-      if (hdrEl) hdrEl.innerHTML = `${legNames[k]} Trim: <span id="${k}-val" style="color:#f59e0b; font-family:monospace; font-weight:700;">${legOffsets[k] > 0 ? '+' : ''}${legOffsets[k]}</span>`;
+      if (hdrEl) hdrEl.innerHTML = `${displayName} Trim: <span id="${k}-val" style="color:#f59e0b; font-family:monospace; font-weight:700;">${legOffsets[k] > 0 ? '+' : ''}${legOffsets[k]}</span>`;
     } else {
       if (sl) { sl.classList.remove("offset-slider"); sl.min = "0"; sl.max = "180"; sl.value = legAngles[k]; }
-      if (hdrEl) hdrEl.innerHTML = `${legNames[k]}: <span id="${k}-val" style="color:#38bdf8; font-family:monospace; font-weight:700;">${legAngles[k]} deg</span>`;
+      if (hdrEl) hdrEl.innerHTML = `${displayName}: <span id="${k}-val" style="color:#38bdf8; font-family:monospace; font-weight:700;">${legAngles[k]} deg</span>`;
     }
   });
 }
@@ -170,7 +193,7 @@ async function saveCalibrationOffsets() {
   else updateAllLegUI();
 
   appendLog("Calibration", `Offsets Saved: LL=${legOffsets.ll}, HR=${legOffsets.hr}, HL=${legOffsets.hl}, LR=${legOffsets.lr}`);
-  showToast(`Offsets saved to Flash (NVS)! Reset to 90° Stand`, "success");
+  showToast("Offsets saved to Flash (NVS)! Reset to 90 deg Stand", "success");
 
   if (txt) txt.innerText = "Saved to Flash (NVS)";
   if (btn) btn.style.background = "#059669";
@@ -197,8 +220,9 @@ function resetToStandPose() {
 function requestCalibrationSync() {
   sendCommand("cal_get");
   sendCommand("status");
-  showToast("Syncing offsets from ESP32...", "info");
-  appendLog("Sync", "Requested calibration offsets and status.");
+  sendCommand("gethw");
+  showToast("Syncing offsets and hardware from ESP32...", "info");
+  appendLog("Sync", "Requested calibration offsets and hardware config.");
 }
 
 function toggleSyncFront() {
@@ -263,4 +287,140 @@ function applyReceivedOffsets(text) {
   if (moLL) { legOffsets.ll = parseInt(moLL[1], 10); const el = document.getElementById("oll-val"); if (el) el.innerText = moLL[1]; }
   if (moLR) { legOffsets.lr = parseInt(moLR[1], 10); const el = document.getElementById("olr-val"); if (el) el.innerText = moLR[1]; }
   if (isOffsetMode) updateAllLegUI();
+}
+
+function applyReceivedHardwarePins(text) {
+  const srvM = text.match(/srv=(\d+),(\d+),(\d+),(\d+)/);
+  if (srvM) {
+    hardwarePins.srv_ll = parseInt(srvM[1], 10);
+    hardwarePins.srv_hr = parseInt(srvM[2], 10);
+    hardwarePins.srv_hl = parseInt(srvM[3], 10);
+    hardwarePins.srv_lr = parseInt(srvM[4], 10);
+  }
+  const sensM = text.match(/sens=(\d+),(\d+)/);
+  if (sensM) {
+    hardwarePins.sens_trig = parseInt(sensM[1], 10);
+    hardwarePins.sens_echo = parseInt(sensM[2], 10);
+  }
+  const audM = text.match(/aud=(\d+),(\d+),(\d+)/);
+  if (audM) {
+    hardwarePins.aud_bclk = parseInt(audM[1], 10);
+    hardwarePins.aud_lrc  = parseInt(audM[2], 10);
+    hardwarePins.aud_din  = parseInt(audM[3], 10);
+  }
+  try { localStorage.setItem("esp32_hw_pins", JSON.stringify(hardwarePins)); } catch (e) {}
+  populateHardwareModalInputs();
+}
+
+function applyReceivedHardwareNames(text) {
+  const mHl = text.match(/hl=([^;]+)/);
+  const mHr = text.match(/hr=([^;]+)/);
+  const mLl = text.match(/ll=([^;]+)/);
+  const mLr = text.match(/lr=([^;\n\r]+)/);
+  if (mHl && mHl[1].trim()) legNames.hl = mHl[1].trim();
+  if (mHr && mHr[1].trim()) legNames.hr = mHr[1].trim();
+  if (mLl && mLl[1].trim()) legNames.ll = mLl[1].trim();
+  if (mLr && mLr[1].trim()) legNames.lr = mLr[1].trim();
+  try { localStorage.setItem("esp32_leg_names", JSON.stringify(legNames)); } catch (e) {}
+  updateAllLegUI();
+  populateHardwareModalInputs();
+}
+
+function openHardwareModal() {
+  populateHardwareModalInputs();
+  const m = document.getElementById("hw-config-modal");
+  if (m) m.style.display = "flex";
+}
+
+function closeHardwareModal() {
+  const m = document.getElementById("hw-config-modal");
+  if (m) m.style.display = "none";
+}
+
+function populateHardwareModalInputs() {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
+  setVal("modal-name-hl", legNames.hl);
+  setVal("modal-name-hr", legNames.hr);
+  setVal("modal-name-ll", legNames.ll);
+  setVal("modal-name-lr", legNames.lr);
+
+  setVal("modal-pin-ll", hardwarePins.srv_ll);
+  setVal("modal-pin-hr", hardwarePins.srv_hr);
+  setVal("modal-pin-hl", hardwarePins.srv_hl);
+  setVal("modal-pin-lr", hardwarePins.srv_lr);
+
+  setVal("modal-pin-trig", hardwarePins.sens_trig);
+  setVal("modal-pin-echo", hardwarePins.sens_echo);
+
+  setVal("modal-pin-bclk", hardwarePins.aud_bclk);
+  setVal("modal-pin-lrc",  hardwarePins.aud_lrc);
+  setVal("modal-pin-din",  hardwarePins.aud_din);
+}
+
+async function saveAllHardwareConfig() {
+  const getNum = (id, def) => { const v = parseInt(document.getElementById(id)?.value, 10); return isNaN(v) ? def : v; };
+  const getStr = (id, def) => { const v = document.getElementById(id)?.value.trim(); return v || def; };
+
+  legNames.hl = getStr("modal-name-hl", "Front Left (HL)");
+  legNames.hr = getStr("modal-name-hr", "Front Right (HR)");
+  legNames.ll = getStr("modal-name-ll", "Back Left (LL)");
+  legNames.lr = getStr("modal-name-lr", "Back Right (LR)");
+
+  hardwarePins.srv_ll = getNum("modal-pin-ll", 1);
+  hardwarePins.srv_hr = getNum("modal-pin-hr", 2);
+  hardwarePins.srv_hl = getNum("modal-pin-hl", 3);
+  hardwarePins.srv_lr = getNum("modal-pin-lr", 4);
+
+  hardwarePins.sens_trig = getNum("modal-pin-trig", 5);
+  hardwarePins.sens_echo = getNum("modal-pin-echo", 6);
+
+  hardwarePins.aud_bclk = getNum("modal-pin-bclk", 10);
+  hardwarePins.aud_lrc  = getNum("modal-pin-lrc", 11);
+  hardwarePins.aud_din  = getNum("modal-pin-din", 12);
+
+  try {
+    localStorage.setItem("esp32_leg_names", JSON.stringify(legNames));
+    localStorage.setItem("esp32_hw_pins", JSON.stringify(hardwarePins));
+  } catch (e) {}
+
+  updateAllLegUI();
+
+  // Transmit hardware reconfiguration to ESP32 over BLE with 20ms safety spacing
+  await sendCommand(`setnames ${legNames.hl.replace(/\s+/g, "_")} ${legNames.hr.replace(/\s+/g, "_")} ${legNames.ll.replace(/\s+/g, "_")} ${legNames.lr.replace(/\s+/g, "_")}`);
+  await new Promise(r => setTimeout(r, 20));
+  await sendCommand(`setpins leg ${hardwarePins.srv_ll} ${hardwarePins.srv_hr} ${hardwarePins.srv_hl} ${hardwarePins.srv_lr}`);
+  await new Promise(r => setTimeout(r, 20));
+  await sendCommand(`setpins sens ${hardwarePins.sens_trig} ${hardwarePins.sens_echo}`);
+  await new Promise(r => setTimeout(r, 20));
+  await sendCommand(`setpins aud ${hardwarePins.aud_bclk} ${hardwarePins.aud_lrc} ${hardwarePins.aud_din}`);
+
+  showToast("Hardware Pins & Names Saved!", "success");
+  appendLog("Config", `GPIOs updated: Legs(${hardwarePins.srv_ll},${hardwarePins.srv_hr},${hardwarePins.srv_hl},${hardwarePins.srv_lr}) Sens(${hardwarePins.sens_trig},${hardwarePins.sens_echo}) Aud(${hardwarePins.aud_bclk},${hardwarePins.aud_lrc},${hardwarePins.aud_din})`);
+  closeHardwareModal();
+}
+
+async function resetHardwareDefaults() {
+  legNames = {
+    hl: "Front Left (HL)",
+    hr: "Front Right (HR)",
+    ll: "Back Left (LL)",
+    lr: "Back Right (LR)"
+  };
+  hardwarePins = {
+    srv_ll: 1, srv_hr: 2, srv_hl: 3, srv_lr: 4,
+    sens_trig: 5, sens_echo: 6,
+    aud_bclk: 10, aud_lrc: 11, aud_din: 12
+  };
+  try {
+    localStorage.setItem("esp32_leg_names", JSON.stringify(legNames));
+    localStorage.setItem("esp32_hw_pins", JSON.stringify(hardwarePins));
+  } catch (e) {}
+  populateHardwareModalInputs();
+  updateAllLegUI();
+  await sendCommand("setpins leg 1 2 3 4");
+  await new Promise(r => setTimeout(r, 20));
+  await sendCommand("setpins sens 5 6");
+  await new Promise(r => setTimeout(r, 20));
+  await sendCommand("setpins aud 10 11 12");
+  showToast("Restored GPIO Pin Defaults", "info");
 }

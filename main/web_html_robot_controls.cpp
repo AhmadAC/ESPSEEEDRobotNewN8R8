@@ -32,27 +32,72 @@ const char html_part2[] = R"raw_html(
 
         <div class='grid'>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Left Leg (GPIO 1)</span><span id='val_low_left'>90&deg;</span></div>
+                <div class='ctrl-header'><span id='lbl_low_left'>Back Left Leg (LL)</span><span id='val_low_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Left Shoulder (GPIO 3)</span><span id='val_high_left'>90&deg;</span></div>
+                <div class='ctrl-header'><span id='lbl_high_left'>Front Left Shoulder (HL)</span><span id='val_high_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Right Leg (GPIO 4)</span><span id='val_low_right'>90&deg;</span></div>
+                <div class='ctrl-header'><span id='lbl_low_right'>Back Right Leg (LR)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Right Shoulder (GPIO 2)</span><span id='val_high_right'>90&deg;</span></div>
+                <div class='ctrl-header'><span id='lbl_high_right'>Front Right Shoulder (HR)</span><span id='val_high_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
             </div>
         </div>
     </div>
 
-    <!-- CALIBRATION & HARDWARE ZEROING CARD (RESTORED) -->
+    <!-- HARDWARE & LEG REPROGRAMMING CARD -->
+    <div class='card' id='hw_reprogram_card'>
+        <h2>Reprogram Hardware GPIO Pins &amp; Leg Names</h2>
+        <p class='text-sm' style='margin-bottom:15px;'>Customize any hardware pin mapping or leg label live and persist directly to flash memory.</p>
+        
+        <div class='grid'>
+            <div class='ctrl-group' style='border-left-color: #38bdf8;'>
+                <label style='color:#38bdf8;'>Leg Labels &amp; Names:</label>
+                <div style='display:grid; grid-template-columns:1fr 1fr; gap:8px;'>
+                    <div><label class='text-sm'>Front Left (HL):</label><input type='text' id='hw_name_hl' value='Front Left (HL)'></div>
+                    <div><label class='text-sm'>Front Right (HR):</label><input type='text' id='hw_name_hr' value='Front Right (HR)'></div>
+                    <div><label class='text-sm'>Back Left (LL):</label><input type='text' id='hw_name_ll' value='Back Left (LL)'></div>
+                    <div><label class='text-sm'>Back Right (LR):</label><input type='text' id='hw_name_lr' value='Back Right (LR)'></div>
+                </div>
+            </div>
+
+            <div class='ctrl-group' style='border-left-color: #f59e0b;'>
+                <label style='color:#f59e0b;'>Servo PWM GPIO Pins:</label>
+                <div style='display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;'>
+                    <div><label class='text-sm'>LL Pin:</label><input type='number' id='hw_pin_ll' min='0' max='48' value='1'></div>
+                    <div><label class='text-sm'>HR Pin:</label><input type='number' id='hw_pin_hr' min='0' max='48' value='2'></div>
+                    <div><label class='text-sm'>HL Pin:</label><input type='number' id='hw_pin_hl' min='0' max='48' value='3'></div>
+                    <div><label class='text-sm'>LR Pin:</label><input type='number' id='hw_pin_lr' min='0' max='48' value='4'></div>
+                </div>
+
+                <label style='color:#f59e0b; margin-top:10px;'>Ultrasonic Pins:</label>
+                <div style='display:grid; grid-template-columns:1fr 1fr; gap:6px;'>
+                    <div><label class='text-sm'>Trig (Out):</label><input type='number' id='hw_pin_trig' min='0' max='48' value='5'></div>
+                    <div><label class='text-sm'>Echo (In):</label><input type='number' id='hw_pin_echo' min='0' max='48' value='6'></div>
+                </div>
+
+                <label style='color:#f59e0b; margin-top:10px;'>Speaker I2S Pins:</label>
+                <div style='display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;'>
+                    <div><label class='text-sm'>BCLK:</label><input type='number' id='hw_pin_bclk' min='0' max='48' value='10'></div>
+                    <div><label class='text-sm'>LRC:</label><input type='number' id='hw_pin_lrc' min='0' max='48' value='11'></div>
+                    <div><label class='text-sm'>DIN:</label><input type='number' id='hw_pin_din' min='0' max='48' value='12'></div>
+                </div>
+            </div>
+        </div>
+        <div class='grid' style='margin-top:15px;'>
+            <button class='btn-green' onclick='saveHardwareFromWeb()'>Save All Pins &amp; Names to NVS</button>
+            <button class='btn-gray' onclick='fetchHardwareFromWeb()'>Reload Pins from ESP32</button>
+        </div>
+    </div>
+
+    <!-- CALIBRATION & HARDWARE ZEROING CARD -->
     <div class='card'>
-        <h2>Pose Calibration & Zeroing</h2>
+        <h2>Pose Calibration &amp; Zeroing</h2>
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #f59e0b;'>
                 <label>Target to Calibrate:</label>
@@ -93,13 +138,13 @@ const char html_part2[] = R"raw_html(
         </div>
     </div>
 
-    <!-- ULTRASONIC OBSTACLE MONITOR CARD (RESTORED WITH LIVE STREAMING) -->
+    <!-- ULTRASONIC OBSTACLE MONITOR CARD (CONTINUOUS LIVE DISTANCE) -->
     <div class='card'>
         <h2>Ultrasonic Obstacle Safety Monitor</h2>
         <div class='grid'>
-            <div class='ctrl-group' style='border-left-color: #ef4444;'>
+            <div class='ctrl-group' style='border-left-color: #38bdf8;'>
                 <label>Sensor Toggle Status:</label>
-                <button id='btn_sensor' onclick='toggleSensor()'>Enable Sensor</button>
+                <button id='btn_sensor' onclick='toggleSensor()' class='btn-blue'>ARM SAFETY STOP</button>
                 <p style='font-size: 16px; margin-top: 15px;'>Live Distance: <span id='live_dist' style='font-weight: bold; color: var(--primary);'>--</span> cm</p>
             </div>
             <div class='ctrl-group' style='border-left-color: #8b5cf6;'>

@@ -1,868 +1,137 @@
-// main\servo_controller.cpp
+// main\servo_controller.cpp (Facade)
 #include "servo_controller.h"
+#include "servo_hw.h"
+#include "servo_storage.h"
+#include "servo_animation.h"
 #include "sensor_monitor.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/timers.h"
-#include "driver/ledc.h"
-#include "driver/gpio.h"
-#include "driver/rtc_io.h"
-#include "esp_log.h"
-#include "nvs.h"
-#include "cJSON.h"
 #include <string.h>
-#include <stdio.h>
 
-static const char *TAG = "SERVO";
-
-// Pinout mapping for ESP32-S3 Zero N8R8
-#define SERVO_LOW_LEFT_PIN   GPIO_NUM_1 // GPIO 1 (Back Left)
-#define SERVO_HIGH_RIGHT_PIN GPIO_NUM_2 // GPIO 2 (Front Right)
-#define SERVO_HIGH_LEFT_PIN  GPIO_NUM_3 // GPIO 3 (Front Left)
-#define SERVO_LOW_RIGHT_PIN  GPIO_NUM_4 // GPIO 4 (Back Right)
-
-#define SERVO_LOW_LEFT_CH    LEDC_CHANNEL_0
-#define SERVO_HIGH_RIGHT_CH  LEDC_CHANNEL_2
-#define SERVO_HIGH_LEFT_CH   LEDC_CHANNEL_3
-#define SERVO_LOW_RIGHT_CH   LEDC_CHANNEL_4
-
-static const gpio_num_t servo_pins[4] = {
-    SERVO_LOW_LEFT_PIN,
-    SERVO_HIGH_RIGHT_PIN,
-    SERVO_HIGH_LEFT_PIN,
-    SERVO_LOW_RIGHT_PIN
-};
-
-static const ledc_channel_t servo_channels[4] = {
-    SERVO_LOW_LEFT_CH,
-    SERVO_HIGH_RIGHT_CH,
-    SERVO_HIGH_LEFT_CH,
-    SERVO_LOW_RIGHT_CH
-};
-
-static bool servos_active = false;
-static bool ledc_initialized = false;
-static TimerHandle_t servo_auto_relax_timer = NULL;
-static volatile bool auto_relax_requested = false;
-
-// State Variables (Logical angles: 0 = Left, 180 = Right)
-static int32_t target_low_left   = 90;
-static int32_t target_high_right = 90;
-static int32_t target_high_left  = 90;
-static int32_t target_low_right  = 90;
-
-static int active_animation = 0; 
-static int anim_state = 0;
-static int anim_pos = 90;
-static int wait_counter = 0;
-
-static int32_t offset_low_left   = 0;
-static int32_t offset_high_right = 0;
-static int32_t offset_high_left  = 0;
-static int32_t offset_low_right  = 11;
-
-struct Pose { int32_t ll, hr, hl, lr; };
-static Pose poses[5] = {
-    {0, 0, 0, 0},        // sit
-    {90, 90, 90, 90},    // stand
-    {90, 180, 180, 90},  // stretch_down
-    {0, 90, 90, 0},      // stretch_back
-    {90, 90, 90, 90}     // stop
-};
-
-static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_back", "stop"};
-static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"};
-
-// Forward declaration
-static void relax_all_servos();
-
-// Pure, zero-stack callback: flags the animation task instead of calling heavy functions
-static void servo_relax_timer_cb(TimerHandle_t xTimer) {
-    if (active_animation == 0) {
-        auto_relax_requested = true;
-    }
+void servo_controller_init(void) {
+    servo_storage_init();
+    servo_hw_init();
+    servo_animation_init();
 }
 
-static void schedule_auto_relax() {
-    auto_relax_requested = false;
-    if (active_animation == 0 && servo_auto_relax_timer != NULL) {
-        xTimerReset(servo_auto_relax_timer, 0);
-    }
-}
-
-static void cancel_auto_relax() {
-    auto_relax_requested = false;
-    if (servo_auto_relax_timer != NULL) {
-        xTimerStop(servo_auto_relax_timer, 0);
-    }
-}
-
-static void init_servo_ledc() {
-    if (ledc_initialized) return;
-
-    ledc_timer_config_t ledc_timer = {};
-    ledc_timer.speed_mode       = LEDC_LOW_SPEED_MODE;
-    ledc_timer.duty_resolution  = LEDC_TIMER_13_BIT;
-    ledc_timer.timer_num        = LEDC_TIMER_0;
-    ledc_timer.freq_hz          = 50;  
-    ledc_timer.clk_cfg          = LEDC_AUTO_CLK;
-    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
-
-    const uint32_t staggered_hpoints[4] = {0, 1500, 3000, 4500};
-
-    for (int i = 0; i < 4; i++) {
-        ledc_channel_config_t chan_cfg = {};
-        chan_cfg.speed_mode = LEDC_LOW_SPEED_MODE;
-        chan_cfg.channel    = servo_channels[i];
-        chan_cfg.timer_sel  = LEDC_TIMER_0;
-        chan_cfg.intr_type  = LEDC_INTR_DISABLE;
-        chan_cfg.gpio_num   = servo_pins[i];
-        chan_cfg.duty       = 0;
-        chan_cfg.hpoint     = staggered_hpoints[i];
-        ESP_ERROR_CHECK(ledc_channel_config(&chan_cfg));
-    }
-    ledc_initialized = true;
-    ESP_LOGI(TAG, "LEDC Hardware Initialized for Servos with Staggered Phases.");
-}
-
-static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
-    if (!servos_active) return;
-    init_servo_ledc();
-
-    int32_t final_angle = target_angle + offset;
-    
-    if (channel == SERVO_LOW_RIGHT_CH) {
-        if (final_angle < 4) final_angle = 4;
-    } else {
-        if (final_angle < 0) final_angle = 0;
-    }
-    
-    if (final_angle > 180) final_angle = 180;
-    
-    uint32_t duty = 205 + ((1024 - 205) * final_angle) / 180;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
-}
-
-// Staggers all 4 servo updates by 20ms to eliminate simultaneous inrush currents
-static void apply_all_servos() {
-    if (!servos_active) return;
-
-    write_servo_calibrated(SERVO_LOW_LEFT_CH,   180 - target_low_left,  -offset_low_left);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right,       offset_high_right);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    write_servo_calibrated(SERVO_HIGH_LEFT_CH,  180 - target_high_left, -offset_high_left);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    write_servo_calibrated(SERVO_LOW_RIGHT_CH,  target_low_right,        offset_low_right);
-
-    schedule_auto_relax();
-}
-
-static void relax_all_servos() {
-    servos_active = false;
-    active_animation = 0;
-    cancel_auto_relax();
-
-    if (ledc_initialized) {
-        for (int i = 0; i < 4; i++) {
-            ledc_stop(LEDC_LOW_SPEED_MODE, servo_channels[i], 0);
-        }
-    }
-
-    for (int i = 0; i < 4; i++) {
-        gpio_set_level(servo_pins[i], 0);
-    }
-    ESP_LOGI(TAG, "All Servos Relaxed & Stopped (0 Amps draw)");
-}
-
-static void servo_animation_task(void *pv) {
-    while(1) {
-        if (auto_relax_requested) {
-            auto_relax_requested = false;
-            relax_all_servos();
-            ESP_LOGI(TAG, "Static position reached. Servos auto-relaxed to protect battery.");
-        }
-
-        if (!servos_active) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            continue;
-        }
-
-        if (active_animation == 1) { 
-            cancel_auto_relax();
-            if (anim_state == 0) {
-                anim_pos += 4;
-                if (anim_pos >= 130) anim_state = 1;
-            } else if (anim_state == 1) {
-                anim_pos -= 4;
-                if (anim_pos <= 50) anim_state = 0;
-            }
-            
-            target_high_left = anim_pos;
-            target_low_right = anim_pos;
-            target_high_right = 180 - anim_pos;
-            target_low_left = 180 - anim_pos;
-            
-            apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 2) {
-            cancel_auto_relax();
-            if (anim_state == 0) {
-                anim_pos -= 4;
-                if (anim_pos <= 50) anim_state = 1;
-            } else if (anim_state == 1) {
-                anim_pos += 4;
-                if (anim_pos >= 130) anim_state = 0;
-            }
-            
-            target_high_left = anim_pos;
-            target_low_right = anim_pos;
-            target_high_right = 180 - anim_pos;
-            target_low_left = 180 - anim_pos;
-            
-            apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 3) {
-            if (anim_state == 0) {
-                anim_pos += 4;
-                if (anim_pos >= 130) anim_state = 1;
-            } else if (anim_state == 1) {
-                anim_pos -= 4;
-                if (anim_pos <= 50) anim_state = 2;
-            } else if (anim_state == 2) {
-                anim_pos += 4;
-                if (anim_pos >= 90) {
-                    anim_pos = 90;
-                    active_animation = 0;
-                    schedule_auto_relax();
-                }
-            }
-            
-            target_high_left = anim_pos;
-            target_low_right = anim_pos;
-            target_high_right = 180 - anim_pos;
-            target_low_left = 180 - anim_pos;
-            
-            apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 4) {
-            if (anim_state == 0) {
-                anim_pos -= 4;
-                if (anim_pos <= 50) anim_state = 1;
-            } else if (anim_state == 1) {
-                anim_pos += 4;
-                if (anim_pos >= 130) anim_state = 2;
-            } else if (anim_state == 2) {
-                anim_pos -= 4;
-                if (anim_pos <= 90) {
-                    anim_pos = 90;
-                    active_animation = 0;
-                    schedule_auto_relax();
-                }
-            }
-            
-            target_high_left = anim_pos;
-            target_low_right = anim_pos;
-            target_high_right = 180 - anim_pos;
-            target_low_left = 180 - anim_pos;
-            
-            apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 5) {
-            int step = 20;
-            if (anim_state == 0) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) {
-                anim_pos += step;
-                if (anim_pos >= 90) { 
-                    anim_pos = 90; 
-                    active_animation = 0;
-                    schedule_auto_relax();
-                }
-            }
-            target_high_left = anim_pos;
-            write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 6) {
-            int step = 20; 
-            if (anim_state == 0) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) {
-                anim_pos += step;
-                if (anim_pos >= 90) { 
-                    anim_pos = 90; 
-                    active_animation = 0;
-                    schedule_auto_relax();
-                }
-            }
-            target_high_right = anim_pos;
-            write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 7) {
-            cancel_auto_relax();
-            if (anim_state == 0) {
-                anim_pos += 5;
-                if (anim_pos >= 135) anim_state = 1;
-            } else if (anim_state == 1) {
-                anim_pos -= 5;
-                if (anim_pos <= 45) anim_state = 0;
-            }
-            
-            target_low_left = 0;
-            target_low_right = 0;
-            target_high_left = anim_pos;
-            target_high_right = 180 - anim_pos;
-            
-            apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 8) {
-            // STAND POSE: Sequential 20ms stagger across all 4 legs
-            if (anim_state == 0) {
-                target_high_right = poses[1].hr;
-                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-                anim_state = 1;
-            } else if (anim_state == 1) {
-                target_low_right = poses[1].lr;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                anim_state = 2;
-            } else if (anim_state == 2) {
-                target_high_left = poses[1].hl;
-                write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-                anim_state = 3;
-            } else if (anim_state == 3) {
-                target_low_left = poses[1].ll;
-                write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                anim_state = 4;
-            } else if (anim_state == 4) {
-                active_animation = 0;
-                schedule_auto_relax();
-            }
-            vTaskDelay(pdMS_TO_TICKS(20));
-            
-        } else if (active_animation == 9) {
-            int step = 20; 
-            if (anim_state == 0) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) {
-                anim_pos += step;
-                if (anim_pos >= 90) { 
-                    anim_pos = 90; 
-                    active_animation = 0; 
-                    schedule_auto_relax();
-                }
-            }
-            target_low_left = anim_pos;
-            write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else if (active_animation == 10) {
-            int step = 20; 
-            if (anim_state == 0) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
-            } else if (anim_state == 1) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
-            } else if (anim_state == 2) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
-            } else if (anim_state == 3) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
-            } else if (anim_state == 4) {
-                anim_pos += step;
-                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
-            } else if (anim_state == 5) {
-                anim_pos -= step;
-                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
-            } else if (anim_state == 6) {
-                anim_pos += step;
-                if (anim_pos >= 90) { 
-                    anim_pos = 90; 
-                    active_animation = 0; 
-                    schedule_auto_relax();
-                }
-            }
-            target_low_right = anim_pos;
-            write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else if (active_animation == 11) {
-            cancel_auto_relax();
-            if (anim_state == 0) {
-                target_high_left = 180;
-                write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-                anim_state = 1;
-            } else if (anim_state == 1) {
-                target_high_right = 180;
-                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-                wait_counter = 0;
-                anim_state = 2;
-            } else if (anim_state == 2) {
-                wait_counter++;
-                if (wait_counter >= 20) {
-                    target_low_left = 180;
-                    write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                    anim_state = 3;
-                }
-            } else if (anim_state == 3) {
-                target_low_right = 180;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                wait_counter = 0;
-                anim_state = 4;
-            } else if (anim_state == 4) {
-                wait_counter++;
-                if (wait_counter >= 20) {
-                    target_low_left = 0;
-                    write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                    anim_state = 5;
-                }
-            } else if (anim_state == 5) {
-                target_low_right = 0;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                wait_counter = 0;
-                anim_state = 6;
-            } else if (anim_state == 6) {
-                wait_counter++;
-                if (wait_counter >= 20) {
-                    anim_state = 0;
-                }
-            }
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else if (active_animation == 12) {
-            // SIT POSE: Staggered 20ms per leg to prevent brownout
-            if (anim_state == 0) {
-                target_low_left = poses[0].ll;
-                write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                anim_state = 1;
-            } else if (anim_state == 1) {
-                target_low_right = poses[0].lr;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                anim_state = 2;
-            } else if (anim_state == 2) {
-                target_high_left = poses[0].hl;
-                write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-                anim_state = 3;
-            } else if (anim_state == 3) {
-                target_high_right = poses[0].hr;
-                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-                anim_state = 4;
-            } else if (anim_state == 4) {
-                active_animation = 0;
-                schedule_auto_relax();
-            }
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else if (active_animation == 13) {
-            // STRETCH DOWN: Staggered 20ms per leg to prevent brownout
-            if (anim_state == 0) {
-                target_high_left = poses[2].hl;
-                write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-                anim_state = 1;
-            } else if (anim_state == 1) {
-                target_high_right = poses[2].hr;
-                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-                anim_state = 2;
-            } else if (anim_state == 2) {
-                target_low_left = poses[2].ll;
-                write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                anim_state = 3;
-            } else if (anim_state == 3) {
-                target_low_right = poses[2].lr;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                anim_state = 4;
-            } else if (anim_state == 4) {
-                active_animation = 0;
-                schedule_auto_relax();
-            }
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else if (active_animation == 14) {
-            // STRETCH BACK: Staggered 20ms per leg to prevent brownout
-            if (anim_state == 0) {
-                target_low_left = poses[3].ll;
-                write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-                anim_state = 1;
-            } else if (anim_state == 1) {
-                target_low_right = poses[3].lr;
-                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-                anim_state = 2;
-            } else if (anim_state == 2) {
-                target_high_left = poses[3].hl;
-                write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-                anim_state = 3;
-            } else if (anim_state == 3) {
-                target_high_right = poses[3].hr;
-                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-                anim_state = 4;
-            } else if (anim_state == 4) {
-                active_animation = 0;
-                schedule_auto_relax();
-            }
-            vTaskDelay(pdMS_TO_TICKS(20));
-
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-    }
-}
-
-void servo_controller_init() {
-    gpio_config_t servo_io_cfg = {};
-    servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
-    servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
-    servo_io_cfg.pin_bit_mask = (1ULL << SERVO_LOW_LEFT_PIN) | (1ULL << SERVO_HIGH_RIGHT_PIN) |
-                                (1ULL << SERVO_HIGH_LEFT_PIN) | (1ULL << SERVO_LOW_RIGHT_PIN);
-    servo_io_cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    servo_io_cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
-    gpio_config(&servo_io_cfg);
-
-    for (int i = 0; i < 4; i++) {
-        gpio_set_level(servo_pins[i], 0);
-        rtc_gpio_pullup_dis(servo_pins[i]);
-        rtc_gpio_pulldown_en(servo_pins[i]);
-    }
-
-    nvs_handle_t my_handle;
-    if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        nvs_get_i32(my_handle, "ll_off", &offset_low_left);
-        nvs_get_i32(my_handle, "hr_off", &offset_high_right);
-        nvs_get_i32(my_handle, "hl_off", &offset_high_left);
-        nvs_get_i32(my_handle, "lr_off", &offset_low_right);
-
-        for (int i = 0; i < 5; i++) {
-            char key[16];
-            snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].ll);
-            snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hr);
-            snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hl);
-            snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].lr);
-        }
-        nvs_close(my_handle);
-    }
-
-    servos_active = false;
-    active_animation = 0;
-    ledc_initialized = false;
-    auto_relax_requested = false;
-
-    servo_auto_relax_timer = xTimerCreate("srv_relax", pdMS_TO_TICKS(4000), pdFALSE, NULL, servo_relax_timer_cb);
-
-    // Pin to Core 1 so Core 0 stays dedicated to BLE/Wi-Fi radio stacks
-    xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 1);
-    ESP_LOGI(TAG, "Servo Controller Ready (Completely Dormant on boot, Core 1)");
-}
-
-void servo_set_target(const char* id, int angle) {
+void servo_set_target(const char *id, int angle) {
     if (sensor_is_safety_locked()) return;
-    servos_active = true;
-    active_animation = 0;
-    
+    servo_hw_set_active(true);
+    servo_animation_stop();
+
+    servo_storage_set_target_by_id(id, angle);
+    int o_ll, o_hr, o_hl, o_lr;
+    servo_storage_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
+
     if (strcmp(id, "low_left") == 0) {
-        target_low_left = angle;
-        write_servo_calibrated(SERVO_LOW_LEFT_CH, 180 - target_low_left, -offset_low_left);
-        schedule_auto_relax();
-        return;
-    }
-    if (strcmp(id, "high_right") == 0) {
-        target_high_right = angle;
-        write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-        schedule_auto_relax();
-        return;
-    }
-    if (strcmp(id, "high_left") == 0) {
-        target_high_left = angle;
-        write_servo_calibrated(SERVO_HIGH_LEFT_CH, 180 - target_high_left, -offset_high_left);
-        schedule_auto_relax();
-        return;
-    }
-    if (strcmp(id, "low_right") == 0) {
-        target_low_right = angle;
-        write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-        schedule_auto_relax();
-        return;
-    }
-    
-    if (strcmp(id, "all") == 0) {
-        target_low_left = angle; target_high_right = angle; target_high_left = angle; target_low_right = angle;
-        apply_all_servos();
+        servo_hw_write(SERVO_LOW_LEFT_CH, 180 - angle, -o_ll);
+        servo_hw_schedule_relax();
+    } else if (strcmp(id, "high_right") == 0) {
+        servo_hw_write(SERVO_HIGH_RIGHT_CH, angle, o_hr);
+        servo_hw_schedule_relax();
+    } else if (strcmp(id, "high_left") == 0) {
+        servo_hw_write(SERVO_HIGH_LEFT_CH, 180 - angle, -o_hl);
+        servo_hw_schedule_relax();
+    } else if (strcmp(id, "low_right") == 0) {
+        servo_hw_write(SERVO_LOW_RIGHT_CH, angle, o_lr);
+        servo_hw_schedule_relax();
+    } else if (strcmp(id, "all") == 0) {
+        servo_animation_apply_staggered();
     }
 }
 
-void servo_set_target_silent(const char* id, int angle) {
+void servo_set_target_silent(const char *id, int angle) {
     if (sensor_is_safety_locked()) return;
-    servos_active = true;
-    active_animation = 0;
-    
-    if (strcmp(id, "low_left") == 0)   target_low_left = angle;
-    if (strcmp(id, "high_right") == 0) target_high_right = angle;
-    if (strcmp(id, "high_left") == 0)  target_high_left = angle;
-    if (strcmp(id, "low_right") == 0)  target_low_right = angle;
+    servo_hw_set_active(true);
+    servo_animation_stop();
+    servo_storage_set_target_by_id(id, angle);
 }
 
-void servo_apply_targets() {
+void servo_apply_targets(void) {
     if (sensor_is_safety_locked()) return;
-    servos_active = true;
-    apply_all_servos();
+    servo_hw_set_active(true);
+    servo_animation_apply_staggered();
 }
 
-void servo_set_action(const char* action_name) {
+void servo_set_action(const char *action_name) {
     if (sensor_is_safety_locked()) return;
     servo_set_action_bypass(action_name);
 }
 
-void servo_set_action_bypass(const char* action_name) {
+void servo_set_action_bypass(const char *action_name) {
     if (strcmp(action_name, "stop") == 0) {
-        relax_all_servos();
+        servo_animation_stop();
+        servo_hw_relax_all();
         return;
     }
+    if (strcmp(action_name, "none") == 0) return;
 
-    if (strcmp(action_name, "none") == 0) {
-        return;
-    }
+    servo_hw_set_active(true);
 
-    servos_active = true;
-
-    if (strcmp(action_name, "forward") == 0) {
-        if (active_animation != 1) {
-            active_animation = 1;
-            anim_state = 0;
-            anim_pos = 90;
-            wait_counter = 0;
+    if (strcmp(action_name, "forward") == 0)        servo_animation_start(1);
+    else if (strcmp(action_name, "backward") == 0)  servo_animation_start(2);
+    else if (strcmp(action_name, "step_forward") == 0)  servo_animation_start(3);
+    else if (strcmp(action_name, "step_backward") == 0) servo_animation_start(4);
+    else if (strcmp(action_name, "left_wave") == 0)     servo_animation_start(5);
+    else if (strcmp(action_name, "right_wave") == 0)    servo_animation_start(6);
+    else if (strcmp(action_name, "crawl") == 0)         servo_animation_start(7);
+    else if (strcmp(action_name, "stand") == 0)         servo_animation_start(8);
+    else if (strcmp(action_name, "back_left_wave") == 0)  servo_animation_start(9);
+    else if (strcmp(action_name, "back_right_wave") == 0) servo_animation_start(10);
+    else if (strcmp(action_name, "leap_forward") == 0)  servo_animation_start(11);
+    else if (strcmp(action_name, "sit") == 0)           servo_animation_start(12);
+    else if (strcmp(action_name, "stretch_down") == 0)  servo_animation_start(13);
+    else if (strcmp(action_name, "stretch_back") == 0)  servo_animation_start(14);
+    else {
+        int idx = servo_storage_find_pose_index(action_name);
+        if (idx >= 0) {
+            ServoPose p = servo_storage_get_pose(idx);
+            servo_storage_set_targets(p.ll, p.hr, p.hl, p.lr);
+            servo_animation_apply_staggered();
         }
-    } else if (strcmp(action_name, "backward") == 0) {
-        if (active_animation != 2) {
-            active_animation = 2;
-            anim_state = 0;
-            anim_pos = 90;
-            wait_counter = 0;
-        }
-    } else if (strcmp(action_name, "step_forward") == 0) {
-        active_animation = 3;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "step_backward") == 0) {
-        active_animation = 4;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "left_wave") == 0) {
-        active_animation = 5;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "right_wave") == 0) {
-        active_animation = 6;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "crawl") == 0) {
-        active_animation = 7;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "stand") == 0) {
-        active_animation = 8;
-        anim_state = 0;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "back_left_wave") == 0) {
-        active_animation = 9;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "back_right_wave") == 0) {
-        active_animation = 10;
-        anim_state = 0;
-        anim_pos = 90;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "leap_forward") == 0) {
-        active_animation = 11;
-        anim_state = 0;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "sit") == 0) {
-        active_animation = 12;
-        anim_state = 0;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "stretch_down") == 0) {
-        active_animation = 13;
-        anim_state = 0;
-        wait_counter = 0;
-    } else if (strcmp(action_name, "stretch_back") == 0) {
-        active_animation = 14;
-        anim_state = 0;
-        wait_counter = 0;
-    } else {
-        active_animation = 0;
-        for (int i = 0; i < 5; i++) {
-            if (strcmp(action_name, pose_names[i]) == 0) {
-                target_low_left   = poses[i].ll;
-                target_high_right = poses[i].hr;
-                target_high_left  = poses[i].hl;
-                target_low_right  = poses[i].lr;
-                break;
-            }
-        }
-        apply_all_servos();
     }
 }
 
-void servo_get_angles(int* ll, int* hr, int* hl, int* lr) {
-    *ll = target_low_left; *hr = target_high_right;
-    *hl = target_high_left; *lr = target_low_right;
+void servo_get_angles(int *ll, int *hr, int *hl, int *lr) {
+    servo_storage_get_targets(ll, hr, hl, lr);
 }
 
-void servo_get_offsets(int* ll, int* hr, int* hl, int* lr) {
-    *ll = offset_low_left; *hr = offset_high_right;
-    *hl = offset_high_left; *lr = offset_low_right;
+void servo_get_offsets(int *ll, int *hr, int *hl, int *lr) {
+    servo_storage_get_offsets(ll, hr, hl, lr);
 }
 
-void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, bool save_to_nvs) {
-    servos_active = true;
+void servo_set_pins(int ll, int hr, int hl, int lr) {
+    servo_hw_set_pins(ll, hr, hl, lr);
+}
+
+void servo_get_pins(int *ll, int *hr, int *hl, int *lr) {
+    servo_hw_get_pins(ll, hr, hl, lr);
+}
+
+void servo_set_leg_names(const char *hl, const char *hr, const char *ll, const char *lr) {
+    servo_storage_set_leg_names(hl, hr, ll, lr);
+}
+
+void servo_get_leg_names(char *hl, char *hr, char *ll, char *lr, size_t max_len) {
+    servo_storage_get_leg_names(hl, hr, ll, lr, max_len);
+}
+
+char* servo_get_calibrations_json(void) {
+    return servo_storage_get_json();
+}
+
+char* servo_get_calibrations_cpp(void) {
+    return servo_storage_get_cpp();
+}
+
+void servo_set_calibration(const char *target, int ll, int hr, int hl, int lr, bool save_to_nvs) {
+    servo_hw_set_active(true);
     if (strcmp(target, "offsets") == 0) {
-        offset_low_left = ll; offset_high_right = hr;
-        offset_high_left = hl; offset_low_right = lr;
-        apply_all_servos();
-        
-        if (save_to_nvs) {
-            nvs_handle_t my_handle;
-            if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
-                nvs_set_i32(my_handle, "ll_off", offset_low_left);
-                nvs_set_i32(my_handle, "hr_off", offset_high_right);
-                nvs_set_i32(my_handle, "hl_off", offset_high_left);
-                nvs_set_i32(my_handle, "lr_off", offset_low_right);
-                nvs_commit(my_handle);
-                nvs_close(my_handle);
-            }
-        }
+        servo_storage_set_offsets(ll, hr, hl, lr, save_to_nvs);
+        servo_animation_apply_staggered();
     } else {
-        for (int i = 0; i < 5; i++) {
-            if (strcmp(target, pose_names[i]) == 0) {
-                poses[i].ll = ll; poses[i].hr = hr; poses[i].hl = hl; poses[i].lr = lr;
-                servo_set_action(pose_names[i]);
-                
-                if (save_to_nvs) {
-                    nvs_handle_t my_handle;
-                    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
-                        char key[16];
-                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].ll);
-                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hr);
-                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].hl);
-                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, poses[i].lr);
-                        nvs_commit(my_handle);
-                        nvs_close(my_handle);
-                    }
-                }
-                break;
-            }
+        int idx = servo_storage_find_pose_index(target);
+        if (idx >= 0) {
+            servo_storage_set_pose(idx, ll, hr, hl, lr, save_to_nvs);
+            servo_set_action(servo_storage_get_pose_name(idx));
         }
     }
-}
-
-char* servo_get_calibrations_json() {
-    cJSON *root = cJSON_CreateObject();
-    
-    cJSON *off = cJSON_CreateObject();
-    cJSON_AddNumberToObject(off, "ll", offset_low_left);
-    cJSON_AddNumberToObject(off, "hr", offset_high_right);
-    cJSON_AddNumberToObject(off, "hl", offset_high_left);
-    cJSON_AddNumberToObject(off, "lr", offset_low_right);
-    cJSON_AddItemToObject(root, "offsets", off);
-
-    for (int i = 0; i < 5; i++) {
-        cJSON *p = cJSON_CreateObject();
-        cJSON_AddNumberToObject(p, "ll", poses[i].ll);
-        cJSON_AddNumberToObject(p, "hr", poses[i].hr);
-        cJSON_AddNumberToObject(p, "hl", poses[i].hl);
-        cJSON_AddNumberToObject(p, "lr", poses[i].lr);
-        cJSON_AddItemToObject(root, pose_names[i], p);
-    }
-
-    char *json_str = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    return json_str;
-}
-
-char* servo_get_calibrations_cpp() {
-    char* dbuf = (char*)malloc(1024);
-    snprintf(dbuf, 1024,
-        "// =========================================================\n"
-        "// ESPRobot Calibration Defaults (ESP32-S3 Zero)\n"
-        "// =========================================================\n\n"
-        "static int32_t offset_low_left   = %ld;\n"
-        "static int32_t offset_high_right = %ld;\n"
-        "static int32_t offset_high_left  = %ld;\n"
-        "static int32_t offset_low_right  = %ld;\n\n"
-        "struct Pose { int32_t ll, hr, hl, lr; };\n"
-        "static Pose poses[5] = {\n"
-        "    {%ld, %ld, %ld, %ld},  // sit\n"
-        "    {%ld, %ld, %ld, %ld},  // stand\n"
-        "    {%ld, %ld, %ld, %ld},  // stretch_down\n"
-        "    {%ld, %ld, %ld, %ld},  // stretch_back\n"
-        "    {%ld, %ld, %ld, %ld}   // stop\n"
-        "};\n",
-        offset_low_left, offset_high_right, offset_high_left, offset_low_right,
-        poses[0].ll, poses[0].hr, poses[0].hl, poses[0].lr,
-        poses[1].ll, poses[1].hr, poses[1].hl, poses[1].lr,
-        poses[2].ll, poses[2].hr, poses[2].hl, poses[2].lr,
-        poses[3].ll, poses[3].hr, poses[3].hl, poses[3].lr,
-        poses[4].ll, poses[4].hr, poses[4].hl, poses[4].lr
-    );
-    return dbuf;
 }

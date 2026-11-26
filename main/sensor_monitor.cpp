@@ -1,3 +1,4 @@
+// main\sensor_monitor.cpp
 #include "sensor_monitor.h"
 #include "servo_controller.h"
 #include "audio_player.h"
@@ -12,19 +13,17 @@
 
 static const char *TAG = "SENSOR";
 
-#define ULTRASONIC_TRIG_PIN GPIO_NUM_5 // D4
-#define ULTRASONIC_ECHO_PIN GPIO_NUM_6 // D5
+// Default ultrasonic pins (Configurable in NVS)
+static int32_t current_trig_pin = 5; // D4
+static int32_t current_echo_pin = 6; // D5
 
-// Autonomous safety lock flag
-static bool sensor_enabled = false;
+static bool sensor_safety_enabled = false;
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20;
 static int32_t reaction_delay = 0;
 static float current_distance = -1.0f;
 
 static TaskHandle_t sensor_task_handle = NULL;
-static volatile int64_t echo_rise_us = 0;
-static volatile int64_t echo_fall_us = 0;
 
 // Dynamic response buffers
 static char tripped_action[16] = "none";
@@ -35,6 +34,8 @@ static char cleared_audio[16] = "none";
 static void load_sensor_nvs() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+        nvs_get_i32(my_handle, "sens_trig", &current_trig_pin);
+        nvs_get_i32(my_handle, "sens_echo", &current_echo_pin);
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
         nvs_get_i32(my_handle, "sens_react", &reaction_delay);
 
@@ -53,55 +54,62 @@ static void load_sensor_nvs() {
         nvs_close(my_handle);
     }
 
+    if (current_trig_pin <= 0) current_trig_pin = 5;
+    if (current_echo_pin <= 0) current_echo_pin = 6;
     if (strlen(tripped_action) == 0) strcpy(tripped_action, "none");
     if (strlen(cleared_action) == 0) strcpy(cleared_action, "none");
     if (strlen(tripped_audio) == 0) strcpy(tripped_audio, "none");
     if (strlen(cleared_audio) == 0) strcpy(cleared_audio, "none");
 }
 
-static void ultrasonic_echo_isr(void *arg) {
-    int level = gpio_get_level(ULTRASONIC_ECHO_PIN);
-    int64_t now = esp_timer_get_time();
+static void configure_sensor_gpios() {
+    gpio_config_t trig_io = {};
+    trig_io.intr_type = GPIO_INTR_DISABLE;
+    trig_io.mode = GPIO_MODE_OUTPUT;
+    trig_io.pin_bit_mask = (1ULL << current_trig_pin);
+    trig_io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    trig_io.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&trig_io);
+    gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
-    if (level == 1) {
-        echo_rise_us = now;
-        echo_fall_us = 0;
-    } else if (echo_rise_us > 0) {
-        echo_fall_us = now;
-        if (sensor_task_handle != NULL) {
-            BaseType_t hp_woken = pdFALSE;
-            vTaskNotifyGiveFromISR(sensor_task_handle, &hp_woken);
-            if (hp_woken) {
-                portYIELD_FROM_ISR();
-            }
-        }
-    }
+    gpio_config_t echo_io = {};
+    echo_io.intr_type = GPIO_INTR_DISABLE;
+    echo_io.mode = GPIO_MODE_INPUT;
+    echo_io.pin_bit_mask = (1ULL << current_echo_pin);
+    echo_io.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    echo_io.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&echo_io);
 }
 
 static float read_ultrasonic_distance() {
-    echo_rise_us = 0;
-    echo_fall_us = 0;
-    ulTaskNotifyTake(pdTRUE, 0);
-
-    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
+    gpio_set_level((gpio_num_t)current_trig_pin, 0);
     esp_rom_delay_us(4);
-    gpio_set_level(ULTRASONIC_TRIG_PIN, 1);
+    gpio_set_level((gpio_num_t)current_trig_pin, 1);
     esp_rom_delay_us(12);
-    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
+    gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
-    // Block cleanly on ISR notification without busy-waiting on CPU
-    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(25)) == 0) {
+    int64_t wait_start = esp_timer_get_time();
+    while (gpio_get_level((gpio_num_t)current_echo_pin) == 0) {
+        if (esp_timer_get_time() - wait_start > 12000) {
+            return -1.0f;
+        }
+    }
+
+    int64_t echo_start = esp_timer_get_time();
+    while (gpio_get_level((gpio_num_t)current_echo_pin) == 1) {
+        if (esp_timer_get_time() - echo_start > 25000) {
+            break;
+        }
+    }
+    int64_t echo_end = esp_timer_get_time();
+    int64_t duration = echo_end - echo_start;
+
+    if (duration <= 0 || duration > 25000) {
         return -1.0f;
     }
 
-    int64_t rise = echo_rise_us;
-    int64_t fall = echo_fall_us;
-    if (rise <= 0 || fall <= rise) {
-        return -1.0f;
-    }
-
-    float distance = (float)(fall - rise) / 58.0f;
-    if (distance > 300.0f || distance < 2.0f) {
+    float distance = (float)duration / 58.0f;
+    if (distance > 350.0f || distance < 2.0f) {
         return -1.0f;
     }
 
@@ -115,95 +123,87 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int consecutive_detections = 0;
 
     while (1) {
-        if (!sensor_enabled) {
-            current_distance = -1.0f;
-            safety_lock_engaged = false;
-            last_lock_state = false;
-            consecutive_detections = 0;
-            vTaskDelay(pdMS_TO_TICKS(200));
-            continue;
-        }
-
         float dist = read_ultrasonic_distance();
         current_distance = dist;
 
-        // Glitch rejection: Require 2 consecutive positive readings to engage safety lock
-        if (dist > 0.0f && dist < (float)distance_threshold) {
-            consecutive_detections++;
-            if (consecutive_detections >= 2) {
-                safety_lock_engaged = true;
-                last_detection_time = esp_timer_get_time();
+        if (sensor_safety_enabled) {
+            if (dist > 0.0f && dist < (float)distance_threshold) {
+                consecutive_detections++;
+                if (consecutive_detections >= 2) {
+                    safety_lock_engaged = true;
+                    last_detection_time = esp_timer_get_time();
+                }
+            } else {
+                consecutive_detections = 0;
+                if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1500000)) {
+                    safety_lock_engaged = false;
+                }
+            }
+
+            if (safety_lock_engaged != last_lock_state) {
+                if (reaction_delay > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(reaction_delay));
+                }
+                if (safety_lock_engaged) {
+                    ESP_LOGW(TAG, "Safety Lock ENGAGED! Running Action: %s | Audio: %s", tripped_action, tripped_audio);
+                    if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
+                    if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
+                } else {
+                    ESP_LOGI(TAG, "Safety Lock RELEASED. Running Action: %s | Audio: %s", cleared_action, cleared_audio);
+                    if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
+                    if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
+                }
+                last_lock_state = safety_lock_engaged;
             }
         } else {
+            safety_lock_engaged = false;
+            last_lock_state = false;
             consecutive_detections = 0;
-            if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1500000)) {
-                safety_lock_engaged = false;
-            }
         }
 
-        // State Machine Hook
-        if (safety_lock_engaged != last_lock_state) {
-            if (reaction_delay > 0) {
-                vTaskDelay(pdMS_TO_TICKS(reaction_delay));
-            }
-            if (safety_lock_engaged) {
-                ESP_LOGW(TAG, "Lock ENGAGED! Running Action: %s | Audio: %s", tripped_action, tripped_audio);
-                if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
-                if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
-            } else {
-                ESP_LOGI(TAG, "Lock RELEASED. Running Action: %s | Audio: %s", cleared_action, cleared_audio);
-                if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
-                if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
-            }
-            last_lock_state = safety_lock_engaged;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(120));
     }
 }
 
 void sensor_monitor_init() {
     load_sensor_nvs();
-    sensor_enabled = false;
-
-    gpio_config_t trig_io = {};
-    trig_io.intr_type = GPIO_INTR_DISABLE;
-    trig_io.mode = GPIO_MODE_OUTPUT;
-    trig_io.pin_bit_mask = (1ULL << ULTRASONIC_TRIG_PIN);
-    trig_io.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    trig_io.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&trig_io);
-    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
-
-    gpio_config_t echo_io = {};
-    echo_io.intr_type = GPIO_INTR_ANYEDGE;
-    echo_io.mode = GPIO_MODE_INPUT;
-    echo_io.pin_bit_mask = (1ULL << ULTRASONIC_ECHO_PIN);
-    echo_io.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    echo_io.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&echo_io);
-
-    esp_err_t isr_err = gpio_install_isr_service(0);
-    if (isr_err == ESP_OK || isr_err == ESP_ERR_INVALID_STATE) {
-        gpio_isr_handler_add(ULTRASONIC_ECHO_PIN, ultrasonic_echo_isr, NULL);
-    } else {
-        ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(isr_err));
-    }
+    configure_sensor_gpios();
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 3, &sensor_task_handle, 1);
-    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%d, Echo=GPIO%d (Core 1, IRQ-driven)",
-             ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN);
+    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%ld, Echo=GPIO%ld",
+             (long)current_trig_pin, (long)current_echo_pin);
 }
 
-bool sensor_is_enabled() { return sensor_enabled; }
+void sensor_set_pins(int trig, int echo) {
+    if (trig <= 0 || echo <= 0) return;
+    current_trig_pin = trig;
+    current_echo_pin = echo;
+
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_i32(my_handle, "sens_trig", current_trig_pin);
+        nvs_set_i32(my_handle, "sens_echo", current_echo_pin);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+    configure_sensor_gpios();
+    ESP_LOGI(TAG, "Ultrasonic Sensor pins updated: Trig=GPIO%ld, Echo=GPIO%ld",
+             (long)current_trig_pin, (long)current_echo_pin);
+}
+
+void sensor_get_pins(int *trig, int *echo) {
+    if (trig) *trig = (int)current_trig_pin;
+    if (echo) *echo = (int)current_echo_pin;
+}
+
+bool sensor_is_enabled() { return sensor_safety_enabled; }
 
 void sensor_set_enabled(bool enabled) {
-    sensor_enabled = enabled;
+    sensor_safety_enabled = enabled;
     if (!enabled) {
         safety_lock_engaged = false;
-        current_distance = -1.0f;
     }
-    ESP_LOGI(TAG, "Ultrasonic safety lock %s", enabled ? "ENABLED" : "DISABLED");
+    ESP_LOGI(TAG, "Ultrasonic automatic safety intervention %s", enabled ? "ARMED" : "DISARMED");
 }
 
 int32_t sensor_get_threshold() { return distance_threshold; }

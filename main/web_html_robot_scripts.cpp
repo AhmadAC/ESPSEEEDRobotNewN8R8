@@ -32,7 +32,6 @@ const char html_part4[] = R"raw_html(
     let camActive = false;
     let camRotation = 0;
     
-    // --- WebSocket & Gamepad Logic ---
     let ws;
     function initWebSocket() {
         ws = new WebSocket('ws://' + window.location.host + '/ws');
@@ -109,7 +108,7 @@ const char html_part4[] = R"raw_html(
                 const isSwitchPro = idLower.includes('057e') || idLower.includes('switch') || idLower.includes('pro') || gp.mapping === 'standard';
                 
                 const badgeHtml = isSwitchPro 
-                    ? `<div class="detected-badge">✓ Nintendo Switch Controller Mapped</div>` 
+                    ? `<div class="detected-badge">Nintendo Switch Controller Mapped</div>` 
                     : `<div class="detected-badge" style="border-color:#777; color:#aaa;">Generic Gamepad</div>`;
 
                 htmlContent += `
@@ -290,6 +289,66 @@ const char html_part4[] = R"raw_html(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(bodyData)
         });
+    }
+
+    function fetchHardwareFromWeb() {
+        fetch('/hardware_config')
+            .then(r => r.json())
+            .then(d => {
+                if (d.leg_names) {
+                    if (d.leg_names.hl) { document.getElementById('hw_name_hl').value = d.leg_names.hl; document.getElementById('lbl_high_left').innerText = d.leg_names.hl; }
+                    if (d.leg_names.hr) { document.getElementById('hw_name_hr').value = d.leg_names.hr; document.getElementById('lbl_high_right').innerText = d.leg_names.hr; }
+                    if (d.leg_names.ll) { document.getElementById('hw_name_ll').value = d.leg_names.ll; document.getElementById('lbl_low_left').innerText = d.leg_names.ll; }
+                    if (d.leg_names.lr) { document.getElementById('hw_name_lr').value = d.leg_names.lr; document.getElementById('lbl_low_right').innerText = d.leg_names.lr; }
+                }
+                if (d.srv_pins && d.srv_pins.length === 4) {
+                    document.getElementById('hw_pin_ll').value = d.srv_pins[0];
+                    document.getElementById('hw_pin_hr').value = d.srv_pins[1];
+                    document.getElementById('hw_pin_hl').value = d.srv_pins[2];
+                    document.getElementById('hw_pin_lr').value = d.srv_pins[3];
+                }
+                if (d.sens_pins && d.sens_pins.length === 2) {
+                    document.getElementById('hw_pin_trig').value = d.sens_pins[0];
+                    document.getElementById('hw_pin_echo').value = d.sens_pins[1];
+                }
+                if (d.aud_pins && d.aud_pins.length === 3) {
+                    document.getElementById('hw_pin_bclk').value = d.aud_pins[0];
+                    document.getElementById('hw_pin_lrc').value = d.aud_pins[1];
+                    document.getElementById('hw_pin_din').value = d.aud_pins[2];
+                }
+            }).catch(() => {});
+    }
+
+    function saveHardwareFromWeb() {
+        const payload = {
+            srv_pins: [
+                parseInt(document.getElementById('hw_pin_ll').value, 10),
+                parseInt(document.getElementById('hw_pin_hr').value, 10),
+                parseInt(document.getElementById('hw_pin_hl').value, 10),
+                parseInt(document.getElementById('hw_pin_lr').value, 10)
+            ],
+            sens_pins: [
+                parseInt(document.getElementById('hw_pin_trig').value, 10),
+                parseInt(document.getElementById('hw_pin_echo').value, 10)
+            ],
+            aud_pins: [
+                parseInt(document.getElementById('hw_pin_bclk').value, 10),
+                parseInt(document.getElementById('hw_pin_lrc').value, 10),
+                parseInt(document.getElementById('hw_pin_din').value, 10)
+            ],
+            leg_names: {
+                hl: document.getElementById('hw_name_hl').value.trim(),
+                hr: document.getElementById('hw_name_hr').value.trim(),
+                ll: document.getElementById('hw_name_ll').value.trim(),
+                lr: document.getElementById('hw_name_lr').value.trim()
+            }
+        };
+
+        fetchJSON('/hardware_config', payload)
+            .then(() => {
+                alert('Hardware GPIO Pins and Leg Names saved to ESP32 Flash (NVS)!');
+                fetchHardwareFromWeb();
+            });
     }
 
     function forceAP(){
@@ -522,16 +581,18 @@ const char html_part4[] = R"raw_html(
         clearTimeout(servoTimeouts['bulk']);
         servoTimeouts['bulk'] = setTimeout(() => {
             fetchJSON('/servo', payload);
-        }, 30);
+        }, 35);
     }
 
     function toggleSensor() {
         localSensorEnabled = !localSensorEnabled;
         let btn = document.getElementById('btn_sensor');
         if (localSensorEnabled) {
-            btn.innerText = "Disable Sensor"; btn.classList.remove('btn-green'); btn.classList.add('btn-red');
+            btn.innerText = "DISARM SAFETY STOP"; 
+            btn.className = "btn-red";
         } else {
-            btn.innerText = "Enable Sensor"; btn.classList.remove('btn-red'); btn.classList.add('btn-green');
+            btn.innerText = "ARM SAFETY STOP"; 
+            btn.className = "btn-blue";
         }
         sendSensorConfig();
     }
@@ -593,12 +654,19 @@ const char html_part4[] = R"raw_html(
                     }
                 }
 
+                if (data.leg_names) {
+                    if (data.leg_names.hl) document.getElementById('lbl_high_left').innerText = data.leg_names.hl;
+                    if (data.leg_names.hr) document.getElementById('lbl_high_right').innerText = data.leg_names.hr;
+                    if (data.leg_names.ll) document.getElementById('lbl_low_left').innerText = data.leg_names.ll;
+                    if (data.leg_names.lr) document.getElementById('lbl_low_right').innerText = data.leg_names.lr;
+                }
+
                 let liveSpan = document.getElementById('live_dist');
-                if (data.sensor_enabled) {
-                    liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
-                    liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#ef4444" : "#10b981";
+                if (data.sensor_distance !== undefined && data.sensor_distance >= 0.0) {
+                    liveSpan.innerText = data.sensor_distance.toFixed(1);
+                    liveSpan.style.color = (data.sensor_enabled && data.sensor_distance < data.sensor_threshold) ? "#ef4444" : "#38bdf8";
                 } else {
-                    liveSpan.innerText = "Disabled";
+                    liveSpan.innerText = "--";
                     liveSpan.style.color = "#94a3b8";
                 }
 
@@ -606,9 +674,11 @@ const char html_part4[] = R"raw_html(
                     localSensorEnabled = data.sensor_enabled;
                     let btn = document.getElementById('btn_sensor');
                     if (data.sensor_enabled) {
-                        btn.innerText = "Disable Sensor"; btn.className = "btn-red";
+                        btn.innerText = "DISARM SAFETY STOP"; 
+                        btn.className = "btn-red";
                     } else {
-                        btn.innerText = "Enable Sensor"; btn.className = "btn-green";
+                        btn.innerText = "ARM SAFETY STOP"; 
+                        btn.className = "btn-blue";
                     }
                 }
                 
@@ -658,36 +728,10 @@ const char html_part4[] = R"raw_html(
 
     window.onload = function() { 
         fetchCalibrations();
+        fetchHardwareFromWeb();
         updateStatus(); 
-    }
+    };
 </script>
 </body>
 </html>
-)raw_html";
-
-const char HTML_ROBOT_BASIC[] = R"raw_html(<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 Robot Diagnostics</title>
-<style>
-  body{background:#020617;color:#fff;font-family:sans-serif;padding:20px;max-width:500px;margin:auto;}
-  .card{background:#0f172a;padding:20px;border-radius:10px;margin-bottom:20px;border:1px solid #1e293b;}
-  button,select,input{width:100%;padding:12px;margin:5px 0;border-radius:8px;border:none;background:#1e293b;color:#fff;}
-  button{background:#2563eb;font-weight:bold;cursor:pointer;margin-top:10px;}
-  h2{color:#38bdf8;}
-</style>
-</head><body>
-<h2>ESP32 Robot Diagnostics</h2>
-<div class="card">
-  <button onclick="fetch('/beep')">Test Speaker Tone</button>
-  <button onclick="fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stand'})})">Stand Up</button>
-  <button onclick="fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'sit'})})">Sit Down</button>
-</div>
-<div class="card">
-  <h3 style="margin-top:0;">Wi-Fi Setup</h3>
-  <button onclick="fetch('/scan').then(r=>r.json()).then(d=>{let s=document.getElementById('ssid');s.innerHTML='';d.forEach(n=>s.innerHTML+='<option>'+n+'</option>');})">Scan Networks</button>
-  <select id="ssid"><option>Scan first...</option></select>
-  <input type="password" id="pass" placeholder="Wi-Fi Password">
-  <button style="background:#10b981;" onclick="fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:document.getElementById('ssid').value,pass:document.getElementById('pass').value})}).then(()=>alert('Rebooting...'))">Save & Connect</button>
-</div>
-</body></html>
 )raw_html";

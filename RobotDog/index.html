@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>ESP32 Robot Dog Control Center</title>
-
-  <!-- Modular Stylesheet -->
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -27,6 +25,13 @@
       </div>
     </div>
     <div style="display:flex; align-items:center; gap:6px;">
+      <button type="button" onclick="openHardwareModal()" style="background:#1e293b; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:4px 8px; color:#38bdf8; font-size:10px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:4px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"></path>
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+        </svg>
+        <span>Edit Hardware / Pins</span>
+      </button>
       <span id="backend-badge" style="padding:3px 8px; border-radius:9999px; background:rgba(255,255,255,0.1); font-size:10px; color:rgba(255,255,255,0.6);">Core BLE</span>
     </div>
   </header>
@@ -230,194 +235,19 @@
       </div>
     </div>
 
-    <!-- Switch Buttons Matrix -->
-    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">
-        <span style="font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; display:flex; align-items:center; gap:6px;">
-          <svg style="width:16px; height:16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="6" x2="10" y1="12" y2="12"></line><line x1="8" x2="8" y1="10" y2="14"></line>
-            <line x1="15" x2="15.01" y1="13" y2="13"></line><line x1="18" x2="18.01" y1="11" y2="11"></line>
-            <rect width="20" height="12" x="2" y="6" rx="6"></rect>
-          </svg>
-          <span>Switch Buttons Matrix</span>
-        </span>
- 
-        <div style="display:flex; align-items:center; gap:6px;">
-          <button id="btn-touch-mode" type="button" onclick="toggleRemapMode()" style="padding:4px 10px; font-size:10px; font-weight:700; border-radius:9999px; background:#0284c7; color:white; border:none; cursor:pointer;">
-            Tap Action: SEND
-          </button>
-          <button id="btn-toggle-retract" type="button" onclick="toggleAutoRetract()" style="padding:4px 10px; font-size:10px; font-weight:700; border-radius:9999px; background:#10b981; color:white; border:none; cursor:pointer;">
-            Retract: ON
-          </button>
-        </div>
-      </div>
-
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:rgba(255,255,255,0.6);">
-        <span id="gamepad-mode-hint">Tap any button to trigger it immediately.</span>
-        <span id="gp-badge" style="font-size:10px; padding:2px 8px; border-radius:9999px; background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.5);">No BT Gamepad</span>
-      </div>
-
-      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;" id="switch-buttons-grid">
-        <div id="gp-btn-0" class="btn-card" onclick="onSwitchButtonCardClick(0)"><span style="font-size:13px; font-weight:700;">B</span><span class="btn-cmd-label" id="gp-lbl-0">Stop</span></div>
-        <div id="gp-btn-1" class="btn-card" onclick="onSwitchButtonCardClick(1)"><span style="font-size:13px; font-weight:700;">A</span><span class="btn-cmd-label" id="gp-lbl-1">Stand</span></div>
-        <div id="gp-btn-2" class="btn-card" onclick="onSwitchButtonCardClick(2)"><span style="font-size:13px; font-weight:700;">Y</span><span class="btn-cmd-label" id="gp-lbl-2">Sit</span></div>
-        <div id="gp-btn-3" class="btn-card" onclick="onSwitchButtonCardClick(3)"><span style="font-size:13px; font-weight:700;">X</span><span class="btn-cmd-label" id="gp-lbl-3">Bark</span></div>
-
-        <div id="gp-btn-4" class="btn-card" onclick="onSwitchButtonCardClick(4)"><span style="font-size:13px; font-weight:700;">L</span><span class="btn-cmd-label" id="gp-lbl-4">Tone</span></div>
-        <div id="gp-btn-5" class="btn-card" onclick="onSwitchButtonCardClick(5)"><span style="font-size:13px; font-weight:700;">R</span><span class="btn-cmd-label" id="gp-lbl-5">Stop</span></div>
-        <div id="gp-btn-6" class="btn-card" onclick="onSwitchButtonCardClick(6)"><span style="font-size:13px; font-weight:700;">ZL</span><span class="btn-cmd-label" id="gp-lbl-6">Vol -</span></div>
-        <div id="gp-btn-7" class="btn-card" onclick="onSwitchButtonCardClick(7)"><span style="font-size:13px; font-weight:700;">ZR</span><span class="btn-cmd-label" id="gp-lbl-7">Vol +</span></div>
-
-        <div id="gp-btn-8" class="btn-card" onclick="onSwitchButtonCardClick(8)"><span style="font-size:13px; font-weight:700;">-</span><span class="btn-cmd-label" id="gp-lbl-8">Stretch Bk</span></div>
-        <div id="gp-btn-9" class="btn-card" onclick="onSwitchButtonCardClick(9)"><span style="font-size:13px; font-weight:700;">+</span><span class="btn-cmd-label" id="gp-lbl-9">Stretch Dn</span></div>
-        <div id="gp-btn-10" class="btn-card" onclick="onSwitchButtonCardClick(10)"><span style="font-size:13px; font-weight:700;">L3</span><span class="btn-cmd-label" id="gp-lbl-10">Crawl</span></div>
-        <div id="gp-btn-11" class="btn-card" onclick="onSwitchButtonCardClick(11)"><span style="font-size:13px; font-weight:700;">R3</span><span class="btn-cmd-label" id="gp-lbl-11">Leap</span></div>
-
-        <div id="gp-btn-12" class="btn-card" onclick="onSwitchButtonCardClick(12)">
-          <span style="font-size:11px; font-weight:700; display:flex; align-items:center; gap:2px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-            UP
-          </span>
-          <span class="btn-cmd-label" id="gp-lbl-12">Forward</span>
-        </div>
-        <div id="gp-btn-13" class="btn-card" onclick="onSwitchButtonCardClick(13)">
-          <span style="font-size:11px; font-weight:700; display:flex; align-items:center; gap:2px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            DOWN
-          </span>
-          <span class="btn-cmd-label" id="gp-lbl-13">Backward</span>
-        </div>
-        <div id="gp-btn-14" class="btn-card" onclick="onSwitchButtonCardClick(14)">
-          <span style="font-size:11px; font-weight:700; display:flex; align-items:center; gap:2px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            LEFT
-          </span>
-          <span class="btn-cmd-label" id="gp-lbl-14">L Wave</span>
-        </div>
-        <div id="gp-btn-15" class="btn-card" onclick="onSwitchButtonCardClick(15)">
-          <span style="font-size:11px; font-weight:700; display:flex; align-items:center; gap:2px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-            RIGHT
-          </span>
-          <span class="btn-cmd-label" id="gp-lbl-15">R Wave</span>
-        </div>
-      </div>
-
-      <div style="display:flex; flex-direction:column; gap:6px; margin-top:2px;">
-        <div style="display:flex; align-items:center; gap:8px; background:rgba(15,23,42,0.6); padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); font-size:10px;">
-          <span style="width:48px; font-weight:600; color:rgba(255,255,255,0.6);">L-Stick:</span>
-          <div class="axis-bar-bg"><div id="axis-bar-0" class="axis-bar-fill" style="left:50%; width:0%;"></div></div>
-          <span id="axis-val-0" style="width:32px; text-align:right; font-family:monospace; color:rgba(255,255,255,0.8);">0.00</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:8px; background:rgba(15,23,42,0.6); padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); font-size:10px;">
-          <span style="width:48px; font-weight:600; color:rgba(255,255,255,0.6);">R-Stick:</span>
-          <div class="axis-bar-bg"><div id="axis-bar-2" class="axis-bar-fill" style="left:50%; width:0%;"></div></div>
-          <span id="axis-val-2" style="width:32px; text-align:right; font-family:monospace; color:rgba(255,255,255,0.8);">0.00</span>
-        </div>
-      </div>
-
-      <div class="key-editor-panel" id="switch-editor-box" style="display:none;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span id="switch-editor-title" style="font-size:11px; font-weight:700; color:#f59e0b;">Button B Configuration</span>
-          <span style="font-size:9px; color:rgba(255,255,255,0.4);">Custom Remapper</span>
-        </div>
-
-        <div>
-          <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px;">Quick Action Preset:</label>
-          <select id="switch-preset-select" onchange="onSelectSwitchPreset(this.value)" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:8px; padding:6px 8px; font-size:11px; outline:none;">
-            <option value="">-- Choose Quick Preset --</option>
-            <optgroup label="Robot Dog Locomotion">
-              <option value="forward">Walk Forward</option>
-              <option value="backward">Walk Backward</option>
-              <option value="step_forward">Step Forward</option>
-              <option value="step_backward">Step Backward</option>
-              <option value="leap_forward">Leap Forward</option>
-              <option value="crawl">Forward Crawl</option>
-              <option value="stop">Stop All Motion</option>
-            </optgroup>
-            <optgroup label="Robot Dog Poses &amp; Gestures">
-              <option value="stand">Stand Up</option>
-              <option value="sit">Sit Down</option>
-              <option value="stretch_down">Stretch Down</option>
-              <option value="stretch_back">Stretch Back</option>
-              <option value="left_wave">Left Leg Wave</option>
-              <option value="right_wave">Right Leg Wave</option>
-            </optgroup>
-            <optgroup label="Audio Triggers">
-              <option value="bark">Dog Bark Audio</option>
-              <option value="beep">Diagnostic Test Tone</option>
-              <option value="stop">Stop Speaker Sound</option>
-            </optgroup>
-            <optgroup label="Volume Controls">
-              <option value="vol -10">Volume Down (-10%)</option>
-              <option value="vol +10">Volume Up (+10%)</option>
-            </optgroup>
-          </select>
-        </div>
-
-        <div>
-          <label style="font-size:9px; color:rgba(255,255,255,0.6); display:block; margin-bottom:4px;">Command Text:</label>
-          <input type="text" id="switch-cmd-input" placeholder="e.g. forward, sit, bark, angle 90" style="width:100%; background:#1e293b; color:white; border:1px solid #334155; border-radius:8px; padding:6px 10px; font-size:11px; outline:none; font-family:monospace;">
-        </div>
-
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:2px;">
-          <button type="button" class="touch-btn" onclick="saveSwitchButtonMapping()" style="padding:8px; border-radius:8px; background:#10b981; color:white; font-size:11px; font-weight:700; border:none; cursor:pointer; flex-direction:row; gap:6px;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>Save Remap</span>
-          </button>
-          <button type="button" class="touch-btn" onclick="testActiveSwitchButtonCommand()" style="padding:8px; border-radius:8px; background:#0284c7; color:white; font-size:11px; font-weight:700; border:none; cursor:pointer; flex-direction:row; gap:6px;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            <span>Test Trigger</span>
-          </button>
-        </div>
-      </div>
-
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
-        <button type="button" onclick="requestSyncSwitchButtons()" style="background:none; border:none; color:#38bdf8; font-size:10px; font-weight:600; cursor:pointer;">Sync from ESP32</button>
-        <button type="button" onclick="resetSwitchButtonDefaults()" style="background:none; border:none; color:rgba(255,255,255,0.5); font-size:10px; cursor:pointer;">Reset Defaults</button>
-      </div>
-    </div>
-
-    <!-- Speaker Controls -->
-    <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
-        <span style="font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:rgba(255,255,255,0.6);">HT517 Speaker</span>
-        <span id="vol-val" style="color:#34d399; font-family:monospace; font-weight:700; font-size:14px;">Vol: 80%</span>
-      </div>
-
-      <div style="padding:4px 0;">
-        <input type="range" id="vol-slider" min="0" max="100" value="80" oninput="onVolSliderMove(this.value)">
-      </div>
-
-      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
-        <button type="button" class="touch-btn" onclick="sendCommand('bark')" style="padding:10px; background:#059669; font-size:12px; flex-direction:row; gap:6px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
-          <span>Bark (X)</span>
-        </button>
-        <button type="button" class="touch-btn" onclick="sendCommand('beep')" style="padding:10px; background:#0284c7; font-size:12px; flex-direction:row; gap:6px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-          <span>Tone (L)</span>
-        </button>
-        <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="padding:10px; background:#334155; font-size:12px; flex-direction:row; gap:6px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
-          <span>Stop (R)</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Obstacle Sensor Panel -->
+    <!-- Obstacle Sensor Panel (Continuously Displays Live Measurement) -->
     <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:8px;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#ef4444; display:flex; align-items:center; gap:6px;">
+        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; display:flex; align-items:center; gap:6px;">
           <svg style="width:15px; height:15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2v20"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
           </svg>
           Obstacle Sensor
         </span>
         <div style="display:flex; align-items:center; gap:8px;">
-          <span id="sens-source-tag" style="font-size:9px; color:rgba(255,255,255,0.4); text-transform:uppercase; font-family:monospace; background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px;">OFF</span>
-          <span id="sens-live-dist" style="font-size:17px; font-family:monospace; font-weight:bold; color:rgba(255,255,255,0.3);">--</span>
-          <button id="sensor-toggle-btn" type="button" class="touch-btn" onclick="toggleSensor()" style="padding:5px 12px; border-radius:8px; background:#ef4444; color:white; font-size:10px; font-weight:700; border:none; cursor:pointer;">DISABLED</button>
+          <span id="sens-source-tag" style="font-size:9px; color:#38bdf8; text-transform:uppercase; font-family:monospace; background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px;">PASSIVE</span>
+          <span id="sens-live-dist" style="font-size:18px; font-family:monospace; font-weight:bold; color:#38bdf8;">--</span>
+          <button id="sensor-toggle-btn" type="button" class="touch-btn" onclick="toggleSensor()" style="padding:5px 12px; border-radius:8px; background:#0284c7; color:white; font-size:10px; font-weight:700; border:none; cursor:pointer;">PASSIVE (DISPLAY ONLY)</button>
         </div>
       </div>
 
@@ -491,9 +321,123 @@
 
   </main>
 
+  <!-- HARDWARE & LEG PIN REPROGRAMMING MODAL -->
+  <div id="hw-config-modal" class="modal-backdrop">
+    <div class="modal-dialog no-scrollbar">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:10px;">
+        <span style="font-size:13px; font-weight:700; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+          Hardware GPIO &amp; Leg Names Reprogrammer
+        </span>
+        <button type="button" onclick="closeHardwareModal()" style="background:none; border:none; color:rgba(255,255,255,0.6); cursor:pointer; font-size:16px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <!-- Rename Legs Section -->
+      <div style="margin-top:10px;">
+        <span class="modal-sec-title">Customize Leg Names</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div>
+            <label class="modal-label">Front Left (HL):</label>
+            <input type="text" id="modal-name-hl" class="modal-input" placeholder="Front Left">
+          </div>
+          <div>
+            <label class="modal-label">Front Right (HR):</label>
+            <input type="text" id="modal-name-hr" class="modal-input" placeholder="Front Right">
+          </div>
+          <div>
+            <label class="modal-label">Back Left (LL):</label>
+            <input type="text" id="modal-name-ll" class="modal-input" placeholder="Back Left">
+          </div>
+          <div>
+            <label class="modal-label">Back Right (LR):</label>
+            <input type="text" id="modal-name-lr" class="modal-input" placeholder="Back Right">
+          </div>
+        </div>
+      </div>
+
+      <!-- Servo Motors GPIO Assignment -->
+      <div style="margin-top:10px;">
+        <span class="modal-sec-title">Servo Motor GPIO Pins (PWM)</span>
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
+          <div>
+            <label class="modal-label">LL Pin:</label>
+            <input type="number" id="modal-pin-ll" class="modal-input" min="0" max="48" value="1">
+          </div>
+          <div>
+            <label class="modal-label">HR Pin:</label>
+            <input type="number" id="modal-pin-hr" class="modal-input" min="0" max="48" value="2">
+          </div>
+          <div>
+            <label class="modal-label">HL Pin:</label>
+            <input type="number" id="modal-pin-hl" class="modal-input" min="0" max="48" value="3">
+          </div>
+          <div>
+            <label class="modal-label">LR Pin:</label>
+            <input type="number" id="modal-pin-lr" class="modal-input" min="0" max="48" value="4">
+          </div>
+        </div>
+      </div>
+
+      <!-- Ultrasonic Sensor GPIO Pins -->
+      <div style="margin-top:10px;">
+        <span class="modal-sec-title">Ultrasonic Sensor GPIO Pins</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div>
+            <label class="modal-label">Trig Pin (Output):</label>
+            <input type="number" id="modal-pin-trig" class="modal-input" min="0" max="48" value="5">
+          </div>
+          <div>
+            <label class="modal-label">Echo Pin (Input):</label>
+            <input type="number" id="modal-pin-echo" class="modal-input" min="0" max="48" value="6">
+          </div>
+        </div>
+      </div>
+
+      <!-- Speaker I2S GPIO Pins -->
+      <div style="margin-top:10px;">
+        <span class="modal-sec-title">Speaker I2S Pins (HT517 DAC)</span>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;">
+          <div>
+            <label class="modal-label">BCLK Pin:</label>
+            <input type="number" id="modal-pin-bclk" class="modal-input" min="0" max="48" value="10">
+          </div>
+          <div>
+            <label class="modal-label">LRC / WS:</label>
+            <input type="number" id="modal-pin-lrc" class="modal-input" min="0" max="48" value="11">
+          </div>
+          <div>
+            <label class="modal-label">DIN / Data:</label>
+            <input type="number" id="modal-pin-din" class="modal-input" min="0" max="48" value="12">
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; gap:8px; margin-top:14px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+        <button type="button" onclick="resetHardwareDefaults()" class="trim-btn" style="padding:8px 12px; font-size:10px; background:#334155;">
+          Restore Defaults
+        </button>
+        <div style="display:flex; gap:6px;">
+          <button type="button" onclick="closeHardwareModal()" class="trim-btn" style="padding:8px 12px; font-size:10px; background:#475569;">
+            Cancel
+          </button>
+          <button type="button" onclick="saveAllHardwareConfig()" class="trim-btn" style="padding:8px 14px; font-size:10px; background:#10b981; color:#000; font-weight:700;">
+            Save &amp; Apply GPIOs
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <footer style="margin-top:8px;">
     <form onsubmit="handleSendCustom(event)" style="display:flex; gap:8px;">
-      <input type="text" id="cmd-input" placeholder="Type command (e.g. status, sensor on, d)..." style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px 12px; font-size:12px; color:white; outline:none;">
+      <input type="text" id="cmd-input" placeholder="Type command (e.g. status, sit, stand, d)..." style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px 12px; font-size:12px; color:white; outline:none;">
       <button type="submit" class="touch-btn" style="padding:0 16px; border-radius:12px; background:#0284c7; color:white; font-size:12px; font-weight:600; border:none; cursor:pointer; flex-direction:row; gap:6px;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
         <span>Send</span>
@@ -501,7 +445,6 @@
     </form>
   </footer>
 
-  <!-- Modular Scripts -->
   <script src="ble.js"></script>
   <script src="telemetry.js"></script>
   <script src="kinematics.js"></script>

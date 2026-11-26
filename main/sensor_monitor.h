@@ -10,6 +10,10 @@ void sensor_set_threshold(int32_t threshold);
 float sensor_get_distance();
 bool sensor_is_safety_locked();
 
+// Dynamic GPIO Hardware Pins Configuration
+void sensor_set_pins(int trig, int echo);
+void sensor_get_pins(int *trig, int *echo);
+
 // Reaction time modifier
 int32_t sensor_get_reaction_time();
 void sensor_set_reaction_time(int32_t time_ms);

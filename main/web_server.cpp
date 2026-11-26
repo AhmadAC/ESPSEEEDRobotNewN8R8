@@ -40,14 +40,12 @@ static esp_err_t captive_portal_redirect(httpd_req_t *req) {
     char host[64] = {0};
     httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
     
-    // Prevent infinite redirect loops: if hitting 192.168.4.1 directly, serve the UI
     if (strcmp(host, "192.168.4.1") == 0 || strcmp(host, "192.168.4.1:80") == 0) {
         if (strcmp(req->uri, "/") == 0 || strcmp(req->uri, "/generate_204") == 0) {
             return index_get_handler(req);
         }
     }
     
-    // Android/Apple Captive Portal Trigger
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_send(req, NULL, 0);
@@ -162,7 +160,7 @@ static esp_err_t cam_flip_post_handler(httpd_req_t *req) {
 esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
     *json_out = NULL;
     int total_len = req->content_len;
-    if (total_len >= 512 || total_len <= 0) {
+    if (total_len >= 1024 || total_len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid payload size");
         return ESP_FAIL;
     }
@@ -543,6 +541,90 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t hardware_config_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
+
+    cJSON *root = cJSON_CreateObject();
+    int sll = 1, shr = 2, shl = 3, slr = 4;
+    servo_get_pins(&sll, &shr, &shl, &slr);
+    cJSON *srv_arr = cJSON_CreateIntArray((const int[]){sll, shr, shl, slr}, 4);
+    cJSON_AddItemToObject(root, "srv_pins", srv_arr);
+
+    int trig = 5, echo = 6;
+    sensor_get_pins(&trig, &echo);
+    cJSON *sens_arr = cJSON_CreateIntArray((const int[]){trig, echo}, 2);
+    cJSON_AddItemToObject(root, "sens_pins", sens_arr);
+
+    int bclk = 10, lrc = 11, din = 12;
+    audio_get_pins(&bclk, &lrc, &din);
+    cJSON *aud_arr = cJSON_CreateIntArray((const int[]){bclk, lrc, din}, 3);
+    cJSON_AddItemToObject(root, "aud_pins", aud_arr);
+
+    char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};
+    servo_get_leg_names(nhl, nhr, nll, nlr, sizeof(nhl));
+    cJSON *names_obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(names_obj, "hl", nhl);
+    cJSON_AddStringToObject(names_obj, "hr", nhr);
+    cJSON_AddStringToObject(names_obj, "ll", nll);
+    cJSON_AddStringToObject(names_obj, "lr", nlr);
+    cJSON_AddItemToObject(root, "leg_names", names_obj);
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_send(req, json_str, strlen(json_str));
+    free(json_str);
+    return ESP_OK;
+}
+
+static esp_err_t hardware_config_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
+        cJSON *srv = cJSON_GetObjectItem(json, "srv_pins");
+        if (srv && cJSON_GetArraySize(srv) == 4) {
+            servo_set_pins(
+                cJSON_GetArrayItem(srv, 0)->valueint,
+                cJSON_GetArrayItem(srv, 1)->valueint,
+                cJSON_GetArrayItem(srv, 2)->valueint,
+                cJSON_GetArrayItem(srv, 3)->valueint
+            );
+        }
+        cJSON *sens = cJSON_GetObjectItem(json, "sens_pins");
+        if (sens && cJSON_GetArraySize(sens) == 2) {
+            sensor_set_pins(
+                cJSON_GetArrayItem(sens, 0)->valueint,
+                cJSON_GetArrayItem(sens, 1)->valueint
+            );
+        }
+        cJSON *aud = cJSON_GetObjectItem(json, "aud_pins");
+        if (aud && cJSON_GetArraySize(aud) == 3) {
+            audio_set_pins(
+                cJSON_GetArrayItem(aud, 0)->valueint,
+                cJSON_GetArrayItem(aud, 1)->valueint,
+                cJSON_GetArrayItem(aud, 2)->valueint
+            );
+        }
+        cJSON *names = cJSON_GetObjectItem(json, "leg_names");
+        if (names) {
+            cJSON *nhl = cJSON_GetObjectItem(names, "hl");
+            cJSON *nhr = cJSON_GetObjectItem(names, "hr");
+            cJSON *nll = cJSON_GetObjectItem(names, "ll");
+            cJSON *nlr = cJSON_GetObjectItem(names, "lr");
+            servo_set_leg_names(
+                nhl ? nhl->valuestring : "",
+                nhr ? nhr->valuestring : "",
+                nll ? nll->valuestring : "",
+                nlr ? nlr->valuestring : ""
+            );
+        }
+        cJSON_Delete(json);
+        httpd_resp_sendstr(req, "OK");
+        return ESP_OK;
+    }
+    return ESP_FAIL;
+}
+
 static esp_err_t angles_get_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Connection", "close");
     
@@ -577,6 +659,15 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "audio_bclk", bclk);
     cJSON_AddNumberToObject(root, "audio_lrc", lrc);
     cJSON_AddNumberToObject(root, "audio_din", din);
+
+    char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};
+    servo_get_leg_names(nhl, nhr, nll, nlr, sizeof(nhl));
+    cJSON *names_obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(names_obj, "hl", nhl);
+    cJSON_AddStringToObject(names_obj, "hr", nhr);
+    cJSON_AddStringToObject(names_obj, "ll", nll);
+    cJSON_AddStringToObject(names_obj, "lr", nlr);
+    cJSON_AddItemToObject(root, "leg_names", names_obj);
 
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
@@ -632,14 +723,13 @@ void web_server_init(void) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
         config.uri_match_fn = httpd_uri_match_wildcard;
-        config.max_uri_handlers = 36; 
+        config.max_uri_handlers = 42; 
         config.max_open_sockets = 13;
         config.lru_purge_enable = true;                 
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri = {};
 
-            // Captive portal probes
             uri = {}; uri.uri = "/generate_204"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
             httpd_register_uri_handler(server, &uri);
 
@@ -649,7 +739,6 @@ void web_server_init(void) {
             uri = {}; uri.uri = "/ncsi.txt"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
             httpd_register_uri_handler(server, &uri);
 
-            // Universal Endpoints
             uri = {}; uri.uri = "/"; uri.method = HTTP_GET; uri.handler = index_get_handler;
             httpd_register_uri_handler(server, &uri);
 
@@ -671,14 +760,12 @@ void web_server_init(void) {
             uri = {}; uri.uri = "/favicon.ico"; uri.method = HTTP_GET; uri.handler = favicon_get_handler;
             httpd_register_uri_handler(server, &uri);
 
-            // Web Log inspection endpoints
             uri = {}; uri.uri = "/log"; uri.method = HTTP_GET; uri.handler = log_view_get_handler;
             httpd_register_uri_handler(server, &uri);
 
             uri = {}; uri.uri = "/clear_log"; uri.method = HTTP_GET; uri.handler = log_clear_get_handler;
             httpd_register_uri_handler(server, &uri);
 
-            // Universal Claw Endpoints
             uri = {}; uri.uri = "/claw"; uri.method = HTTP_GET; uri.handler = claw_get_handler;
             httpd_register_uri_handler(server, &uri);
 
@@ -728,6 +815,12 @@ void web_server_init(void) {
                 uri = {}; uri.uri = "/sensor"; uri.method = HTTP_POST; uri.handler = sensor_post_handler;
                 httpd_register_uri_handler(server, &uri);
 
+                uri = {}; uri.uri = "/hardware_config"; uri.method = HTTP_GET; uri.handler = hardware_config_get_handler;
+                httpd_register_uri_handler(server, &uri);
+
+                uri = {}; uri.uri = "/hardware_config"; uri.method = HTTP_POST; uri.handler = hardware_config_post_handler;
+                httpd_register_uri_handler(server, &uri);
+
                 uri = {}; uri.uri = "/reset_cal"; uri.method = HTTP_POST; uri.handler = reset_cal_post_handler;
                 httpd_register_uri_handler(server, &uri);
 
@@ -753,7 +846,6 @@ void web_server_init(void) {
                 httpd_register_uri_handler(server, &uri);
             }
             
-            // Fallback wildcard route registered last
             uri = {}; uri.uri = "/*"; uri.method = HTTP_GET; uri.handler = captive_portal_redirect;
             httpd_register_uri_handler(server, &uri);
             
