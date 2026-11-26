@@ -1,4 +1,4 @@
-// 11-3ESPSEEEDRobotNewN8R8/main/main.cpp
+// main/main.cpp
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -200,69 +200,90 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // 1. Hardware clamp servo pins to strict 0V output
-    gpio_config_t servo_io_cfg = {};
-    servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
-    servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
-    servo_io_cfg.pin_bit_mask = (1ULL << GPIO_NUM_1) | (1ULL << GPIO_NUM_2) |
-                                (1ULL << GPIO_NUM_3) | (1ULL << GPIO_NUM_4);
-    servo_io_cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    servo_io_cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
-    gpio_config(&servo_io_cfg);
-
-    gpio_set_level(GPIO_NUM_1, 0);
-    gpio_set_level(GPIO_NUM_2, 0);
-    gpio_set_level(GPIO_NUM_3, 0);
-    gpio_set_level(GPIO_NUM_4, 0);
-
-    rtc_gpio_pullup_dis(GPIO_NUM_1);
-    rtc_gpio_pulldown_en(GPIO_NUM_1);
-    rtc_gpio_pullup_dis(GPIO_NUM_2);
-    rtc_gpio_pulldown_en(GPIO_NUM_2);
-    rtc_gpio_pullup_dis(GPIO_NUM_3);
-    rtc_gpio_pulldown_en(GPIO_NUM_3);
-    rtc_gpio_pullup_dis(GPIO_NUM_4);
-    rtc_gpio_pulldown_en(GPIO_NUM_4);
-
-    // 2. Initialize Non-Volatile Storage (NVS)
+    // ========================================================================
+    // CRITICAL FIX: Initialize NVS FIRST to read the actual configured pins.
+    // The previous version hardcoded GPIO 1-4, leaving custom pins floating 
+    // with internal pull-ups, causing boot-time servo twitching and brownouts.
+    // ========================================================================
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    // 3. Initialize Flash File Logger
+    // Read configured servo pins from NVS (default to 1, 2, 3, 4)
+    int32_t pin_ll = 1, pin_hr = 2, pin_hl = 3, pin_lr = 4;
+    nvs_handle_t h;
+    if (nvs_open("storage", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_i32(h, "pin_ll", &pin_ll);
+        nvs_get_i32(h, "pin_hr", &pin_hr);
+        nvs_get_i32(h, "pin_hl", &pin_hl);
+        nvs_get_i32(h, "pin_lr", &pin_lr);
+        nvs_close(h);
+    }
+    
+    // Fallback to safe defaults if NVS values are invalid/unset
+    if (pin_ll <= 0 || pin_ll > 48) pin_ll = 1;
+    if (pin_hr <= 0 || pin_hr > 48) pin_hr = 2;
+    if (pin_hl <= 0 || pin_hl > 48) pin_hl = 3;
+    if (pin_lr <= 0 || pin_lr > 48) pin_lr = 4;
+
+    // Zero-Glitch Boot-Time Clamping on the ACTUAL configured pins
+    gpio_config_t servo_io_cfg = {};
+    servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
+    servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
+    servo_io_cfg.pin_bit_mask = (1ULL << pin_ll) | (1ULL << pin_hr) |
+                                (1ULL << pin_hl) | (1ULL << pin_lr);
+    servo_io_cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    servo_io_cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+    gpio_config(&servo_io_cfg);
+
+    gpio_set_level((gpio_num_t)pin_ll, 0);
+    gpio_set_level((gpio_num_t)pin_hr, 0);
+    gpio_set_level((gpio_num_t)pin_hl, 0);
+    gpio_set_level((gpio_num_t)pin_lr, 0);
+
+    // Explicitly disable RTC pull-ups and enable pull-downs for these specific pins
+    rtc_gpio_pullup_dis((gpio_num_t)pin_ll);
+    rtc_gpio_pulldown_en((gpio_num_t)pin_ll);
+    rtc_gpio_pullup_dis((gpio_num_t)pin_hr);
+    rtc_gpio_pulldown_en((gpio_num_t)pin_hr);
+    rtc_gpio_pullup_dis((gpio_num_t)pin_hl);
+    rtc_gpio_pulldown_en((gpio_num_t)pin_hl);
+    rtc_gpio_pullup_dis((gpio_num_t)pin_lr);
+    rtc_gpio_pulldown_en((gpio_num_t)pin_lr);
+
+    // Initialize Flash File Logger
     logger_init();
 
     esp_log_level_set("wifi", ESP_LOG_ERROR);
     esp_log_level_set("cam_hal", ESP_LOG_NONE);
 
-    // 4. Setup Base Network Event Loop
+    // Setup Base Network Event Loop
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // 5. Detect Saved Device & Boot Mode
-    nvs_handle_t my_handle;
+    // Detect Saved Device & Boot Mode
     char dev_mode[16] = "robot";
-    if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+    if (nvs_open("storage", NVS_READONLY, &h) == ESP_OK) {
         size_t len = sizeof(dev_mode);
-        nvs_get_str(my_handle, "dev_mode", dev_mode, &len);
-        nvs_close(my_handle);
+        nvs_get_str(h, "dev_mode", dev_mode, &len);
+        nvs_close(h);
     }
  
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // 6. Initialize Wi-Fi and Web Server
+    // Initialize Wi-Fi and Web Server
     ESP_LOGI(TAG, "Starting Wi-Fi and Web Server...");
     wifi_manager_init();
-    web_server_start(); // Refactored to unified start API
+    web_server_start();
 
-    // 7. Initialize Bluetooth Low Energy Engine (Nordic UART Service)
+    // Initialize Bluetooth Low Energy Engine (Nordic UART Service)
     ESP_LOGI(TAG, "Starting Bluetooth LE Subsystem for iPhone app connection...");
     ble_manager_init();
 
-    // 8. Initialize Peripherals based on mode
+    // Initialize Peripherals based on mode
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
@@ -279,7 +300,7 @@ extern "C" void app_main(void) {
         servo_controller_init();
     }
 
-    // 9. Start USB Serial/JTAG console task
+    // Start USB Serial/JTAG console task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
     ESP_LOGI(TAG, "Boot Sequence Complete! Bluetooth, Wi-Fi, Servos and Audio are Active.");
