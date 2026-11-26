@@ -1,4 +1,3 @@
-// main/main.cpp
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -12,7 +11,6 @@
 #include "esp_event.h"
 #include "driver/usb_serial_jtag.h"
 
-// Bulletproof VFS inclusion across ESP-IDF versions
 #if __has_include("esp_vfs_dev.h")
 #include "esp_vfs_dev.h"
 #endif
@@ -27,7 +25,6 @@
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 
-// Modular Component Headers
 #include "logger.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
@@ -43,7 +40,6 @@ static const char *TAG = "MAIN";
 bool is_claw_mode = false;
 bool is_cam_mode = false;
 
-// NON-BLOCKING console task: Works seamlessly on battery without USB host connection
 static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_config_t usbjtag_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbjtag_cfg);
@@ -200,18 +196,14 @@ static void console_read_task(void *pvParameter) {
 }
 
 extern "C" void app_main(void) {
-    // ========================================================================
-    // CRITICAL FIX: Initialize NVS FIRST to read the actual configured pins.
-    // The previous version hardcoded GPIO 1-4, leaving custom pins floating 
-    // with internal pull-ups, causing boot-time servo twitching and brownouts.
-    // ========================================================================
+    // 1. Initialize NVS FIRST to read configured pins
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    // Read configured servo pins from NVS (default to 1, 2, 3, 4)
+    // Read configured servo pins from NVS
     int32_t pin_ll = 1, pin_hr = 2, pin_hl = 3, pin_lr = 4;
     nvs_handle_t h;
     if (nvs_open("storage", NVS_READONLY, &h) == ESP_OK) {
@@ -222,13 +214,12 @@ extern "C" void app_main(void) {
         nvs_close(h);
     }
     
-    // Fallback to safe defaults if NVS values are invalid/unset
     if (pin_ll <= 0 || pin_ll > 48) pin_ll = 1;
     if (pin_hr <= 0 || pin_hr > 48) pin_hr = 2;
     if (pin_hl <= 0 || pin_hl > 48) pin_hl = 3;
     if (pin_lr <= 0 || pin_lr > 48) pin_lr = 4;
 
-    // Zero-Glitch Boot-Time Clamping on the ACTUAL configured pins
+    // 2. Zero-Glitch Boot-Time Clamping on ACTUAL pins
     gpio_config_t servo_io_cfg = {};
     servo_io_cfg.intr_type    = GPIO_INTR_DISABLE;
     servo_io_cfg.mode         = GPIO_MODE_OUTPUT;
@@ -243,7 +234,6 @@ extern "C" void app_main(void) {
     gpio_set_level((gpio_num_t)pin_hl, 0);
     gpio_set_level((gpio_num_t)pin_lr, 0);
 
-    // Explicitly disable RTC pull-ups and enable pull-downs for these specific pins
     rtc_gpio_pullup_dis((gpio_num_t)pin_ll);
     rtc_gpio_pulldown_en((gpio_num_t)pin_ll);
     rtc_gpio_pullup_dis((gpio_num_t)pin_hr);
@@ -253,17 +243,17 @@ extern "C" void app_main(void) {
     rtc_gpio_pullup_dis((gpio_num_t)pin_lr);
     rtc_gpio_pulldown_en((gpio_num_t)pin_lr);
 
-    // Initialize Flash File Logger
+    // 3. Initialize Logger
     logger_init();
 
     esp_log_level_set("wifi", ESP_LOG_ERROR);
     esp_log_level_set("cam_hal", ESP_LOG_NONE);
 
-    // Setup Base Network Event Loop
+    // 4. Network Setup
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // Detect Saved Device & Boot Mode
+    // 5. Detect Mode
     char dev_mode[16] = "robot";
     if (nvs_open("storage", NVS_READONLY, &h) == ESP_OK) {
         size_t len = sizeof(dev_mode);
@@ -274,16 +264,15 @@ extern "C" void app_main(void) {
     is_claw_mode = (strcmp(dev_mode, "claw") == 0);
     is_cam_mode = (strcmp(dev_mode, "cam") == 0);
 
-    // Initialize Wi-Fi and Web Server
+    // 6. Start Services
     ESP_LOGI(TAG, "Starting Wi-Fi and Web Server...");
     wifi_manager_init();
     web_server_start();
 
-    // Initialize Bluetooth Low Energy Engine (Nordic UART Service)
-    ESP_LOGI(TAG, "Starting Bluetooth LE Subsystem for iPhone app connection...");
+    ESP_LOGI(TAG, "Starting Bluetooth LE Subsystem...");
     ble_manager_init();
 
-    // Initialize Peripherals based on mode
+    // 7. Init Peripherals
     if (is_claw_mode) {
         ESP_LOGI(TAG, "Booting Device Profile: CLAW");
         claw_controller_init();
@@ -300,8 +289,8 @@ extern "C" void app_main(void) {
         servo_controller_init();
     }
 
-    // Start USB Serial/JTAG console task
+    // 8. Console Task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "Boot Sequence Complete! Bluetooth, Wi-Fi, Servos and Audio are Active.");
+    ESP_LOGI(TAG, "Boot Sequence Complete!");
 }
