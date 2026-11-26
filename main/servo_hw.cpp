@@ -13,6 +13,12 @@ static int32_t pin_hr = 2;
 static int32_t pin_hl = 3;
 static int32_t pin_lr = 4;
 
+// Track current angles for smooth interpolation
+static int32_t current_angle_ll = 90;
+static int32_t current_angle_hr = 90;
+static int32_t current_angle_hl = 90;
+static int32_t current_angle_lr = 90;
+
 static bool s_servos_active = false;
 static bool s_ledc_initialized = false;
 static TimerHandle_t s_relax_timer = NULL;
@@ -91,6 +97,12 @@ void servo_hw_init(void) {
     s_servos_active = false;
     s_ledc_initialized = false;
     s_relax_requested = false;
+    
+    // Reset current angles
+    current_angle_ll = 90;
+    current_angle_hr = 90;
+    current_angle_hl = 90;
+    current_angle_lr = 90;
 
     s_relax_timer = xTimerCreate("srv_rlx", pdMS_TO_TICKS(4000), pdFALSE, NULL, servo_relax_timer_cb);
 }
@@ -123,6 +135,41 @@ void servo_hw_get_pins(int *ll, int *hr, int *hl, int *lr) {
     if (lr) *lr = (int)pin_lr;
 }
 
+// NEW: Smooth move function with interpolation
+void servo_hw_smooth_write(ledc_channel_t channel, int32_t target_angle, int32_t offset, 
+                           int32_t *current_angle, int step_size, int delay_ms) {
+    if (!s_servos_active) return;
+    init_ledc_if_needed();
+
+    int32_t final_target = target_angle + offset;
+    if (channel == SERVO_LOW_RIGHT_CH) {
+        if (final_target < 4) final_target = 4;
+    } else {
+        if (final_target < 0) final_target = 0;
+    }
+    if (final_target > 180) final_target = 180;
+
+    int32_t current = *current_angle + offset;
+    int direction = (final_target > current) ? 1 : -1;
+    
+    while (current != final_target) {
+        current += direction * step_size;
+        
+        // Clamp to target
+        if ((direction > 0 && current > final_target) || (direction < 0 && current < final_target)) {
+            current = final_target;
+        }
+        
+        uint32_t duty = 205 + ((1024 - 205) * current) / 180;
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
+        
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    
+    *current_angle = target_angle;
+}
+
 void servo_hw_write(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     if (!s_servos_active) return;
     init_ledc_if_needed();
@@ -138,6 +185,12 @@ void servo_hw_write(ledc_channel_t channel, int32_t target_angle, int32_t offset
     uint32_t duty = 205 + ((1024 - 205) * final_angle) / 180;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
+    
+    // Update current angle tracking
+    if (channel == SERVO_LOW_LEFT_CH) current_angle_ll = target_angle;
+    else if (channel == SERVO_HIGH_RIGHT_CH) current_angle_hr = target_angle;
+    else if (channel == SERVO_HIGH_LEFT_CH) current_angle_hl = target_angle;
+    else if (channel == SERVO_LOW_RIGHT_CH) current_angle_lr = target_angle;
 }
 
 void servo_hw_relax_all(void) {
