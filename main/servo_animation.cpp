@@ -1,3 +1,4 @@
+// main/servo_animation.cpp
 #include "servo_animation.h"
 #include "servo_hw.h"
 #include "servo_storage.h"
@@ -21,21 +22,21 @@ void servo_animation_apply_staggered(void) {
     int o_ll, o_hr, o_hl, o_lr;
     servo_storage_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
 
-    // Smooth moves for sliders (5 deg step, 30ms delay)
+    // CRITICAL FIX: Non-blocking immediate moves for sliders to prevent blocking BLE/Web tasks
     if (s_app_ll != t_ll) {
-        servo_hw_smooth_write(SERVO_LOW_LEFT_CH, 180 - t_ll, -o_ll, 5, 30);
+        servo_hw_write(SERVO_LOW_LEFT_CH, 180 - t_ll, -o_ll);
         s_app_ll = t_ll;
     }
     if (s_app_hr != t_hr) {
-        servo_hw_smooth_write(SERVO_HIGH_RIGHT_CH, t_hr, o_hr, 5, 30);
+        servo_hw_write(SERVO_HIGH_RIGHT_CH, t_hr, o_hr);
         s_app_hr = t_hr;
     }
     if (s_app_hl != t_hl) {
-        servo_hw_smooth_write(SERVO_HIGH_LEFT_CH, 180 - t_hl, -o_hl, 5, 30);
+        servo_hw_write(SERVO_HIGH_LEFT_CH, 180 - t_hl, -o_hl);
         s_app_hl = t_hl;
     }
     if (s_app_lr != t_lr) {
-        servo_hw_smooth_write(SERVO_LOW_RIGHT_CH, t_lr, o_lr, 5, 30);
+        servo_hw_write(SERVO_LOW_RIGHT_CH, t_lr, o_lr);
         s_app_lr = t_lr;
     }
     servo_hw_schedule_relax();
@@ -62,7 +63,6 @@ static void anim_step_staggered(int p_idx) {
     int o_ll, o_hr, o_hl, o_lr;
     servo_storage_get_offsets(&o_ll, &o_hr, &o_hl, &o_lr);
 
-    // Smooth moves for Stand/Sit (5 deg step, 30ms delay)
     if (s_anim_state == 0) {
         servo_storage_set_targets(p.ll, p.hr, p.hl, p.lr);
         servo_hw_smooth_write(SERVO_LOW_LEFT_CH, 180 - p.ll, -o_ll, 5, 30);
@@ -141,7 +141,7 @@ static void servo_animation_task(void *pv) {
             servo_hw_write(SERVO_HIGH_LEFT_CH, 180 - s_anim_pos, -o_hl); vTaskDelay(pdMS_TO_TICKS(20));
             servo_hw_write(SERVO_HIGH_RIGHT_CH, s_anim_pos, o_hr); vTaskDelay(pdMS_TO_TICKS(20));
         } else if (s_active_anim == 8) {
-            anim_step_staggered(1); // stand
+            anim_step_staggered(1);
         } else if (s_active_anim == 9) {
             run_wave(SERVO_LOW_LEFT_CH, &s_anim_state, &s_anim_pos, true, -o_ll);
         } else if (s_active_anim == 10) {
@@ -165,11 +165,11 @@ static void servo_animation_task(void *pv) {
             }
             vTaskDelay(pdMS_TO_TICKS(20));
         } else if (s_active_anim == 12) {
-            anim_step_staggered(0); // sit
+            anim_step_staggered(0);
         } else if (s_active_anim == 13) {
-            anim_step_staggered(2); // stretch_down
+            anim_step_staggered(2);
         } else if (s_active_anim == 14) {
-            anim_step_staggered(3); // stretch_back
+            anim_step_staggered(3);
         } else {
             vTaskDelay(pdMS_TO_TICKS(50));
         }
