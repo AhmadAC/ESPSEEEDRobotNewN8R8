@@ -28,8 +28,8 @@ let switchKeyMap = {};
 let selectedSwitchIndex = 0;
 let isRemapMode = false;
 let autoRetractEnabled = true;
-let wasJoystickActive = false;
 let lastBtnStates = {};
+let currentJoystickState = "none"; // CRITICAL FIX: Prevent gamepad flooding (30ms gait restart jitter)
 
 function initSwitchButtonMap() {
   try {
@@ -197,13 +197,30 @@ function pollGamepadThrottled() {
     updateAxisUI(0, leftX);
     const deadzone = 0.25;
 
-    if (leftY < -deadzone) { wasJoystickActive = true; sendCommand("forward"); }
-    else if (leftY > deadzone) { wasJoystickActive = true; sendCommand("backward"); }
-    else if (leftX < -deadzone) { wasJoystickActive = true; sendCommand("left_wave"); }
-    else if (leftX > deadzone) { wasJoystickActive = true; sendCommand("right_wave"); }
-    else if (wasJoystickActive) {
-      wasJoystickActive = false;
-      if (autoRetractEnabled) sendCommand("stop");
+    // CRITICAL FIX: Only send command when state changes, preventing 30ms gait restart jitter
+    if (leftY < -deadzone) { 
+        if (currentJoystickState !== "forward") {
+            currentJoystickState = "forward";
+            sendCommand("forward"); 
+        }
+    } else if (leftY > deadzone) { 
+        if (currentJoystickState !== "backward") {
+            currentJoystickState = "backward";
+            sendCommand("backward"); 
+        }
+    } else if (leftX < -deadzone) { 
+        if (currentJoystickState !== "left_wave") {
+            currentJoystickState = "left_wave";
+            sendCommand("left_wave"); 
+        }
+    } else if (leftX > deadzone) { 
+        if (currentJoystickState !== "right_wave") {
+            currentJoystickState = "right_wave";
+            sendCommand("right_wave"); 
+        }
+    } else if (currentJoystickState !== "none") {
+        currentJoystickState = "none";
+        if (autoRetractEnabled) sendCommand("stop");
     }
   }
   if (gp.axes.length > 2) updateAxisUI(2, gp.axes[2]);
