@@ -227,75 +227,39 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    if (strcmp(p, "sync_front on") == 0) {
-        ble_sync_front = true;
-        ble_manager_send_notify(">> Front Sync ON\n");
-        return;
-    }
-    if (strcmp(p, "sync_front off") == 0) {
-        ble_sync_front = false;
-        ble_manager_send_notify(">> Front Sync OFF\n");
-        return;
-    }
-    if (strcmp(p, "sync_back on") == 0) {
-        ble_sync_back = true;
-        ble_manager_send_notify(">> Back Sync ON\n");
-        return;
-    }
-    if (strcmp(p, "sync_back off") == 0) {
-        ble_sync_back = false;
-        ble_manager_send_notify(">> Back Sync OFF\n");
-        return;
-    }
-    if (strcmp(p, "sync_all on") == 0) {
-        ble_sync_all = ble_sync_front = ble_sync_back = true;
-        ble_manager_send_notify(">> All Sync ON\n");
-        return;
-    }
-    if (strcmp(p, "sync_all off") == 0) {
-        ble_sync_all = ble_sync_front = ble_sync_back = false;
-        ble_manager_send_notify(">> All Sync OFF\n");
-        return;
-    }
+    if (strcmp(p, "sync_front on") == 0) { ble_sync_front = true; ble_manager_send_notify(">> Front Sync ON\n"); return; }
+    if (strcmp(p, "sync_front off") == 0) { ble_sync_front = false; ble_manager_send_notify(">> Front Sync OFF\n"); return; }
+    if (strcmp(p, "sync_back on") == 0) { ble_sync_back = true; ble_manager_send_notify(">> Back Sync ON\n"); return; }
+    if (strcmp(p, "sync_back off") == 0) { ble_sync_back = false; ble_manager_send_notify(">> Back Sync OFF\n"); return; }
+    if (strcmp(p, "sync_all on") == 0) { ble_sync_all = ble_sync_front = ble_sync_back = true; ble_manager_send_notify(">> All Sync ON\n"); return; }
+    if (strcmp(p, "sync_all off") == 0) { ble_sync_all = ble_sync_front = ble_sync_back = false; ble_manager_send_notify(">> All Sync OFF\n"); return; }
 
     int leg_ang = 0;
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
         servo_set_target("high_left", leg_ang);
         if (ble_sync_front || ble_sync_all) servo_set_target("high_right", leg_ang);
-        if (ble_sync_all) {
-            servo_set_target("low_left", leg_ang);
-            servo_set_target("low_right", leg_ang);
-        }
+        if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
         send_full_status();
         return;
     }
     if (sscanf(p, "hr %d", &leg_ang) == 1) {
         servo_set_target("high_right", leg_ang);
         if (ble_sync_front || ble_sync_all) servo_set_target("high_left", leg_ang);
-        if (ble_sync_all) {
-            servo_set_target("low_left", leg_ang);
-            servo_set_target("low_right", leg_ang);
-        }
+        if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
         send_full_status();
         return;
     }
     if (sscanf(p, "ll %d", &leg_ang) == 1) {
         servo_set_target("low_left", leg_ang);
         if (ble_sync_back || ble_sync_all) servo_set_target("low_right", leg_ang);
-        if (ble_sync_all) {
-            servo_set_target("high_left", leg_ang);
-            servo_set_target("high_right", leg_ang);
-        }
+        if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
         send_full_status();
         return;
     }
     if (sscanf(p, "lr %d", &leg_ang) == 1) {
         servo_set_target("low_right", leg_ang);
         if (ble_sync_back || ble_sync_all) servo_set_target("low_left", leg_ang);
-        if (ble_sync_all) {
-            servo_set_target("high_left", leg_ang);
-            servo_set_target("high_right", leg_ang);
-        }
+        if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
         send_full_status();
         return;
     }
@@ -309,36 +273,23 @@ static void execute_ble_command(const char* p) {
         return;
     }
     if (sscanf(p, "offset ll %d", &ll) == 1) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", ll, o2, o3, o4, true);
-        send_full_status();
-        return;
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
+        servo_set_calibration("offsets", ll, o2, o3, o4, true); send_full_status(); return;
     }
     if (sscanf(p, "offset hr %d", &hr) == 1) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, hr, o3, o4, true);
-        send_full_status();
-        return;
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
+        servo_set_calibration("offsets", o1, hr, o3, o4, true); send_full_status(); return;
     }
     if (sscanf(p, "offset hl %d", &hl) == 1) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, o2, hl, o4, true);
-        send_full_status();
-        return;
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
+        servo_set_calibration("offsets", o1, o2, hl, o4, true); send_full_status(); return;
     }
     if (sscanf(p, "offset lr %d", &lr) == 1) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, o2, o3, lr, true);
-        send_full_status();
-        return;
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
+        servo_set_calibration("offsets", o1, o2, o3, lr, true); send_full_status(); return;
     }
     if (strcmp(p, "cal_save") == 0) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
         servo_set_calibration("offsets", o1, o2, o3, o4, true);
         vTaskDelay(pdMS_TO_TICKS(40));
         servo_set_action_bypass("stand");
@@ -347,10 +298,8 @@ static void execute_ble_command(const char* p) {
         return;
     }
     if (strcmp(p, "cal_get") == 0) {
-        int o1, o2, o3, o4;
-        servo_get_offsets(&o1, &o2, &o3, &o4);
-        char rep[64];
-        snprintf(rep, sizeof(rep), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", o3, o2, o1, o4);
+        int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
+        char rep[64]; snprintf(rep, sizeof(rep), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", o3, o2, o1, o4);
         ble_manager_send_notify(rep);
         return;
     }
@@ -371,14 +320,11 @@ static void execute_ble_command(const char* p) {
             if (*endptr != '\0') {
                 nvs_handle_t handle;
                 if (nvs_open("switch_cfg", NVS_READWRITE, &handle) == ESP_OK) {
-                    char k[16];
-                    snprintf(k, sizeof(k), "sw_%ld", btn_idx);
+                    char k[16]; snprintf(k, sizeof(k), "sw_%ld", btn_idx);
                     nvs_set_str(handle, k, endptr);
-                    nvs_commit(handle);
-                    nvs_close(handle);
+                    nvs_commit(handle); nvs_close(handle);
                 }
-                char conf[128];
-                snprintf(conf, sizeof(conf), "SWKEY:%ld=%.80s\n", btn_idx, endptr);
+                char conf[128]; snprintf(conf, sizeof(conf), "SWKEY:%ld=%.80s\n", btn_idx, endptr);
                 ble_manager_send_notify(conf);
                 return;
             }
@@ -388,14 +334,10 @@ static void execute_ble_command(const char* p) {
         nvs_handle_t handle;
         bool nvs_ok = (nvs_open("switch_cfg", NVS_READONLY, &handle) == ESP_OK);
         for (int i = 0; i < 16; i++) {
-            char val[64] = {0}, k[16];
-            size_t len = sizeof(val);
+            char val[64] = {0}, k[16]; size_t len = sizeof(val);
             snprintf(k, sizeof(k), "sw_%d", i);
-            if (!nvs_ok || nvs_get_str(handle, k, val, &len) != ESP_OK) {
-                strncpy(val, DEFAULT_SWITCH_COMMANDS[i], sizeof(val) - 1);
-            }
-            char line[128];
-            snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, val);
+            if (!nvs_ok || nvs_get_str(handle, k, val, &len) != ESP_OK) strncpy(val, DEFAULT_SWITCH_COMMANDS[i], sizeof(val) - 1);
+            char line[128]; snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, val);
             ble_manager_send_notify(line);
         }
         if (nvs_ok) nvs_close(handle);
@@ -404,13 +346,10 @@ static void execute_ble_command(const char* p) {
     if (strcmp(p, "switchreset") == 0) {
         nvs_handle_t handle;
         if (nvs_open("switch_cfg", NVS_READWRITE, &handle) == ESP_OK) {
-            nvs_erase_all(handle);
-            nvs_commit(handle);
-            nvs_close(handle);
+            nvs_erase_all(handle); nvs_commit(handle); nvs_close(handle);
         }
         for (int i = 0; i < 16; i++) {
-            char line[128];
-            snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
+            char line[128]; snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, DEFAULT_SWITCH_COMMANDS[i]);
             ble_manager_send_notify(line);
         }
         ble_manager_send_notify(">> Switch mappings reset.\n");
@@ -450,35 +389,22 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    if (strcmp(p, "status") == 0) {
-        send_full_status();
-        return;
-    }
+    if (strcmp(p, "status") == 0) { send_full_status(); return; }
     if (strcmp(p, "reboot") == 0) {
         ble_manager_send_notify(">> Rebooting...\n");
         vTaskDelay(pdMS_TO_TICKS(150));
         esp_restart();
         return;
     }
-    if (strcmp(p, "cam_flip") == 0) {
-        cam_toggle_flip();
-        ble_manager_send_notify(">> Cam Flipped\n");
-        return;
-    }
+    if (strcmp(p, "cam_flip") == 0) { cam_toggle_flip(); ble_manager_send_notify(">> Cam Flipped\n"); return; }
 
     bool is_num = true;
-    for (int i = 0; p[i] != '\0'; i++) {
-        if (!isdigit((unsigned char)p[i])) {
-            is_num = false;
-            break;
-        }
-    }
+    for (int i = 0; p[i] != '\0'; i++) { if (!isdigit((unsigned char)p[i])) { is_num = false; break; } }
     if (is_num || strncmp(p, "angle ", 6) == 0) {
         int ang = is_num ? atoi(p) : atoi(p + 6);
         if (is_claw_mode) claw_set_angle(ang);
         else servo_set_target("all", ang);
-        char msg[64];
-        snprintf(msg, sizeof(msg), ">> Angle: %d\n", ang);
+        char msg[64]; snprintf(msg, sizeof(msg), ">> Angle: %d\n", ang);
         ble_manager_send_notify(msg);
         send_full_status();
         return;
@@ -497,14 +423,10 @@ static void execute_ble_command(const char* p) {
         if (sen_th) sensor_set_threshold(sen_th->valueint);
         cJSON *sen_trip = cJSON_GetObjectItem(json, "sensor_tripped_action");
         cJSON *sen_clear = cJSON_GetObjectItem(json, "sensor_cleared_action");
-        if (sen_trip && sen_clear && sen_trip->valuestring && sen_clear->valuestring) {
-            sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
-        }
+        if (sen_trip && sen_clear && sen_trip->valuestring && sen_clear->valuestring) sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
         cJSON *sen_atrip = cJSON_GetObjectItem(json, "sensor_tripped_audio");
         cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
-        if (sen_atrip && sen_aclear && sen_atrip->valuestring && sen_aclear->valuestring) {
-            sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
-        }
+        if (sen_atrip && sen_aclear && sen_atrip->valuestring && sen_aclear->valuestring) sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
         cJSON_Delete(json);
         ble_manager_send_notify(">> JSON Handled\n");
         send_full_status();
@@ -569,49 +491,16 @@ static int gatt_svr_chr_access_tx(uint16_t conn, uint16_t attr, struct ble_gatt_
     return 0;
 }
 
+// CRITICAL FIX: Positional initialization to avoid -Wmissing-field-initializers
 static const struct ble_gatt_chr_def gatt_svr_chrs[] = {
-    {
-        .uuid = &gatt_svr_chr_rx_uuid.u,
-        .access_cb = gatt_svr_chr_access_rx,
-        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-        .val_handle = NULL,
-        .descriptors = NULL,
-        .arg = NULL,
-        .min_key_size = 0
-    },
-    {
-        .uuid = &gatt_svr_chr_tx_uuid.u,
-        .access_cb = gatt_svr_chr_access_tx,
-        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-        .val_handle = &s_tx_val_handle,
-        .descriptors = NULL,
-        .arg = NULL,
-        .min_key_size = 0
-    },
-    {
-        .uuid = NULL,
-        .access_cb = NULL,
-        .flags = 0,
-        .val_handle = NULL,
-        .descriptors = NULL,
-        .arg = NULL,
-        .min_key_size = 0
-    }
+    { &gatt_svr_chr_rx_uuid.u, gatt_svr_chr_access_rx, BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP, NULL, NULL, 0, NULL, NULL },
+    { &gatt_svr_chr_tx_uuid.u, gatt_svr_chr_access_tx, BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY, NULL, NULL, 0, &s_tx_val_handle, NULL },
+    { NULL, NULL, 0, NULL, NULL, 0, NULL, NULL }
 };
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
-    {
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &gatt_svr_svc_uart_uuid.u,
-        .characteristics = gatt_svr_chrs,
-        .includes = NULL
-    },
-    {
-        .type = 0,
-        .uuid = NULL,
-        .characteristics = NULL,
-        .includes = NULL
-    }
+    { BLE_GATT_SVC_TYPE_PRIMARY, &gatt_svr_svc_uart_uuid.u, gatt_svr_chrs, NULL },
+    { 0, NULL, NULL, NULL }
 };
 
 static void ble_advertise(void);
@@ -667,13 +556,8 @@ static void ble_host_task(void *param) {
     nimble_port_freertos_deinit();
 }
 
-static void ble_on_sync(void) {
-    ble_advertise();
-}
-
-static void ble_on_reset(int reason) {
-    ESP_LOGE(TAG, "BLE reset: %d", reason);
-}
+static void ble_on_sync(void) { ble_advertise(); }
+static void ble_on_reset(int reason) { ESP_LOGE(TAG, "BLE reset: %d", reason); }
 
 void ble_manager_init(void) {
     if (!s_ble_cmd_queue) {
