@@ -1,4 +1,3 @@
-
 // main\ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -102,7 +101,6 @@ static void send_full_status(void) {
         servo_get_offsets(&oll, &ohr, &ohl, &olr);
     }
 
-    // 1. Send dedicated sensor frame (Live distance is always sent)
     char sens_short[48];
     snprintf(sens_short, sizeof(sens_short), "SENS:%.1f,%d,%ld\n",
              (double)sensor_get_distance(),
@@ -110,23 +108,19 @@ static void send_full_status(void) {
              (long)sensor_get_threshold());
     ble_manager_send_notify(sens_short);
 
-    // 2. Send joint angles
     char angles_str[48];
     snprintf(angles_str, sizeof(angles_str), "ANG:%d,%d,%d,%d\n", hl, hr, ll, lr);
     ble_manager_send_notify(angles_str);
 
-    // 3. Send joint offsets
     char off_str[64];
     snprintf(off_str, sizeof(off_str), "CAL:ohl=%d,ohr=%d,oll=%d,olr=%d\n", ohl, ohr, oll, olr);
     ble_manager_send_notify(off_str);
 
-    // 4. Send volume and telemetry
     char status_str[80];
     snprintf(status_str, sizeof(status_str), "STATUS:vol=%d,dist=%.1f\n",
              audio_get_volume(), (double)sensor_get_distance());
     ble_manager_send_notify(status_str);
 
-    // 5. Send Hardware Pins and Names
     int sll = 1, shr = 2, shl = 3, slr = 4;
     servo_get_pins(&sll, &shr, &shl, &slr);
     int trig = 5, echo = 6;
@@ -134,15 +128,15 @@ static void send_full_status(void) {
     int bclk = 10, lrc = 11, din = 12;
     audio_get_pins(&bclk, &lrc, &din);
 
-    char hwpins[96];
+    char hwpins[128];
     snprintf(hwpins, sizeof(hwpins), "HWPINS:srv=%d,%d,%d,%d;sens=%d,%d;aud=%d,%d,%d\n",
              sll, shr, shl, slr, trig, echo, bclk, lrc, din);
     ble_manager_send_notify(hwpins);
 
     char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};
     servo_get_leg_names(nhl, nhr, nll, nlr, sizeof(nhl));
-    char hwnames[128];
-    snprintf(hwnames, sizeof(hwnames), "HWNAMES:hl=%s;hr=%s;ll=%s;lr=%s\n", nhl, nhr, nll, nlr);
+    char hwnames[256];
+    snprintf(hwnames, sizeof(hwnames), "HWNAMES:hl=%.31s;hr=%.31s;ll=%.31s;lr=%.31s\n", nhl, nhr, nll, nlr);
     ble_manager_send_notify(hwnames);
 }
 
@@ -170,7 +164,6 @@ static void execute_ble_command(const char* p) {
         }
     }
 
-    // Ultrasonic Sensor Controls
     if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
         sensor_set_enabled(true);
         ble_manager_send_notify(">> Sensor Armed\n");
@@ -205,7 +198,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Dynamic Hardware Configuration Over BLE
     if (strncmp(p, "setpins leg ", 12) == 0) {
         int ll = 0, hr = 0, hl = 0, lr = 0;
         if (sscanf(p + 12, "%d %d %d %d", &ll, &hr, &hl, &lr) == 4) {
@@ -247,7 +239,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Leg Synchronization Modes
     if (strcmp(p, "sync_front on") == 0) {
         ble_sync_front = true;
         ble_manager_send_notify(">> Front Legs Sync ON\n");
@@ -283,7 +274,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Staggered Leg Angles
     int leg_ang = 0;
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
         servo_set_target("high_left", leg_ang);
@@ -346,7 +336,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Hardware Offset Calibration & NVS Management
     int c_ll = 0, c_hr = 0, c_hl = 0, c_lr = 0;
     if (sscanf(p, "cal_set offsets %d %d %d %d", &c_ll, &c_hr, &c_hl, &c_lr) == 4) {
         servo_set_calibration("offsets", c_ll, c_hr, c_hl, c_lr, true);
@@ -411,7 +400,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Switch Remapper Handlers
     if (strncmp(p, "switchkey ", 10) == 0) {
         const char *arg = p + 10;
         while (*arg == ' ') arg++;
@@ -477,7 +465,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Audio & Speaker Triggers
     if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0 || strcmp(p, "dog_bark") == 0) {
         audio_play("dog_bark");
         ble_manager_send_notify(">> Playing Dog Bark\n");
@@ -512,7 +499,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // System Telemetry & Reboot
     if (strcmp(p, "status") == 0) {
         send_full_status();
         return;
@@ -547,7 +533,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // JSON Handling
     cJSON *json = cJSON_Parse(p);
     if (json != NULL) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -565,7 +550,7 @@ static void execute_ble_command(const char* p) {
 
         cJSON *sen_trip = cJSON_GetObjectItem(json, "sensor_tripped_action");
         cJSON *sen_clear = cJSON_GetObjectItem(json, "sensor_cleared_action");
-        if (sen_trip && sen_clear) sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
+        if (sen_trip && sen_clear) sensor_set_actions(sen_trip->valuestring, clear_act_val(sen_clear));
 
         cJSON *sen_atrip = cJSON_GetObjectItem(json, "sensor_tripped_audio");
         cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
@@ -577,7 +562,6 @@ static void execute_ble_command(const char* p) {
         return;
     }
 
-    // Direct Kinematics Pose Action (sit, stand, forward, crawl, etc.)
     if (is_claw_mode) {
         claw_execute_command(p);
     } else {
@@ -826,4 +810,3 @@ void ble_manager_init(void) {
     nimble_port_freertos_init(ble_host_task);
     ESP_LOGI(TAG, "BLE Manager Initialized with Dynamic Hardware Configuration.");
 }
-

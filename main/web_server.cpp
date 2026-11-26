@@ -548,17 +548,20 @@ static esp_err_t hardware_config_get_handler(httpd_req_t *req) {
     cJSON *root = cJSON_CreateObject();
     int sll = 1, shr = 2, shl = 3, slr = 4;
     servo_get_pins(&sll, &shr, &shl, &slr);
-    cJSON *srv_arr = cJSON_CreateIntArray((const int[]){sll, shr, shl, slr}, 4);
+    const int srv_pins[4] = {sll, shr, shl, slr};
+    cJSON *srv_arr = cJSON_CreateIntArray(srv_pins, 4);
     cJSON_AddItemToObject(root, "srv_pins", srv_arr);
 
     int trig = 5, echo = 6;
     sensor_get_pins(&trig, &echo);
-    cJSON *sens_arr = cJSON_CreateIntArray((const int[]){trig, echo}, 2);
+    const int sens_pins[2] = {trig, echo};
+    cJSON *sens_arr = cJSON_CreateIntArray(sens_pins, 2);
     cJSON_AddItemToObject(root, "sens_pins", sens_arr);
 
     int bclk = 10, lrc = 11, din = 12;
     audio_get_pins(&bclk, &lrc, &din);
-    cJSON *aud_arr = cJSON_CreateIntArray((const int[]){bclk, lrc, din}, 3);
+    const int aud_pins[3] = {bclk, lrc, din};
+    cJSON *aud_arr = cJSON_CreateIntArray(aud_pins, 3);
     cJSON_AddItemToObject(root, "aud_pins", aud_arr);
 
     char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};

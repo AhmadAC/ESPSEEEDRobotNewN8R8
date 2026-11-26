@@ -1,4 +1,3 @@
-
 // main\web_api_robot.cpp
 #include "web_server.h"
 #include "servo_controller.h"
@@ -101,17 +100,20 @@ static esp_err_t hardware_config_get_handler(httpd_req_t *req) {
     cJSON *root = cJSON_CreateObject();
     int sll = 1, shr = 2, shl = 3, slr = 4;
     servo_get_pins(&sll, &shr, &shl, &slr);
-    cJSON *srv_arr = cJSON_CreateIntArray((const int[]){sll, shr, shl, slr}, 4);
+    const int srv_pins[4] = {sll, shr, shl, slr};
+    cJSON *srv_arr = cJSON_CreateIntArray(srv_pins, 4);
     cJSON_AddItemToObject(root, "srv_pins", srv_arr);
 
     int trig = 5, echo = 6;
     sensor_get_pins(&trig, &echo);
-    cJSON *sens_arr = cJSON_CreateIntArray((const int[]){trig, echo}, 2);
+    const int sens_pins[2] = {trig, echo};
+    cJSON *sens_arr = cJSON_CreateIntArray(sens_pins, 2);
     cJSON_AddItemToObject(root, "sens_pins", sens_arr);
 
     int bclk = 10, lrc = 11, din = 12;
     audio_get_pins(&bclk, &lrc, &din);
-    cJSON *aud_arr = cJSON_CreateIntArray((const int[]){bclk, lrc, din}, 3);
+    const int aud_pins[3] = {bclk, lrc, din};
+    cJSON *aud_arr = cJSON_CreateIntArray(aud_pins, 3);
     cJSON_AddItemToObject(root, "aud_pins", aud_arr);
 
     char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};
@@ -306,235 +308,4 @@ void register_robot_endpoints(httpd_handle_t server) {
 
     uri = {}; uri.uri = "/beep"; uri.method = HTTP_GET; uri.handler = play_beep_handler;
     httpd_register_uri_handler(server, &uri);
-}
-
-RobotDog\telemetry.js
-
-let sensorEnabled = false;
-let isObstacleTripped = false;
-let telemetryPollTimer = null;
-
-function initSensorStorage() {
-  sensorEnabled = false;
-  updateSensorState(false);
-
-  try {
-    const th = localStorage.getItem("esp32_sens_thresh");
-    if (th) {
-      const sl = document.getElementById("sens-dist-slider");
-      const valLbl = document.getElementById("sens-dist-val");
-      if (sl) sl.value = th;
-      if (valLbl) valLbl.innerText = th + "cm";
-    }
-    const tripAct = localStorage.getItem("esp32_sens_trip_act");
-    if (tripAct) {
-      const el = document.getElementById("sens-trip-act");
-      if (el) el.value = tripAct;
-    }
-    const tripAud = localStorage.getItem("esp32_sens_trip_aud");
-    if (tripAud) {
-      const el = document.getElementById("sens-trip-aud");
-      if (el) el.value = tripAud;
-    }
-    const clearAct = localStorage.getItem("esp32_sens_clear_act");
-    if (clearAct) {
-      const el = document.getElementById("sens-clear-act");
-      if (el) el.value = clearAct;
-    }
-    const clearAud = localStorage.getItem("esp32_sens_clear_aud");
-    if (clearAud) {
-      const el = document.getElementById("sens-clear-aud");
-      if (el) el.value = clearAud;
-    }
-  } catch (e) {}
-}
-
-function updateSensorState(enabled) {
-  sensorEnabled = enabled;
-  const btn = document.getElementById("sensor-toggle-btn");
-  if (btn) {
-    btn.innerText = sensorEnabled ? "ARMED (AUTO STOP)" : "PASSIVE (DISPLAY ONLY)";
-    btn.style.background = sensorEnabled ? "#10b981" : "#0284c7";
-  }
-
-  const tagEl = document.getElementById("sens-source-tag");
-  if (tagEl) {
-    tagEl.innerText = sensorEnabled ? "ARMED" : "PASSIVE";
-    tagEl.style.color = sensorEnabled ? "#10b981" : "#38bdf8";
-  }
-}
-
-function updateDistanceUI(distVal, thVal, sourceLabel = "BLE") {
-  const distEl = document.getElementById("sens-live-dist");
-  const tagEl = document.getElementById("sens-source-tag");
-
-  const numDist = parseFloat(distVal);
-  const numTh = parseFloat(thVal) || 20.0;
-
-  if (tagEl) {
-    tagEl.innerText = sensorEnabled ? "ARMED" : "PASSIVE";
-    tagEl.style.color = sensorEnabled ? "#10b981" : "#38bdf8";
-  }
-
-  if (!isNaN(numDist) && numDist > 0.0 && numDist <= 350.0) {
-    if (distEl) {
-      distEl.innerText = numDist.toFixed(1) + "cm";
-      if (numDist < numTh) {
-        distEl.style.color = "#ef4444";
-      } else {
-        distEl.style.color = sensorEnabled ? "#10b981" : "#38bdf8";
-      }
-    }
-
-    if (sensorEnabled) {
-      if (numDist < numTh) {
-        if (!isObstacleTripped) {
-          isObstacleTripped = true;
-          triggerObstacleTrip(numDist, numTh);
-        }
-      } else {
-        if (isObstacleTripped) {
-          isObstacleTripped = false;
-          triggerObstacleClear(numDist, numTh);
-        }
-      }
-    } else {
-      isObstacleTripped = false;
-    }
-  } else {
-    if (distEl) {
-      distEl.innerText = "--";
-      distEl.style.color = "rgba(255,255,255,0.4)";
-    }
-  }
-}
-
-function triggerObstacleTrip(dist, th) {
-  const tripAct = document.getElementById("sens-trip-act")?.value || "sit";
-  const tripAud = document.getElementById("sens-trip-aud")?.value || "beep";
-
-  appendLog("Obstacle", `TRIP TRIGGERED: ${dist.toFixed(1)}cm < ${th}cm (Action: ${tripAct}, Audio: ${tripAud})`);
-
-  if (tripAct && tripAct !== "none") {
-    sendCommand(tripAct);
-  }
-
-  playSensorSound(tripAud);
-}
-
-function triggerObstacleClear(dist, th) {
-  const clearAct = document.getElementById("sens-clear-act")?.value || "stand";
-  const clearAud = document.getElementById("sens-clear-aud")?.value || "none";
-
-  appendLog("Obstacle", `CLEARED: ${dist.toFixed(1)}cm >= ${th}cm (Action: ${clearAct}, Audio: ${clearAud})`);
-
-  if (clearAct && clearAct !== "none") {
-    sendCommand(clearAct);
-  }
-
-  playSensorSound(clearAud);
-}
-
-function playSensorSound(audType) {
-  if (!audType || audType === "none") return;
-
-  if (audType === "dog_bark" || audType === "bark") {
-    sendCommand("bark");
-  } else if (audType === "test_beep" || audType === "beep") {
-    sendCommand("beep");
-  } else {
-    sendCommand(audType);
-  }
-}
-
-function toggleSensor() {
-  sensorEnabled = !sensorEnabled;
-  updateSensorState(sensorEnabled);
-  try {
-    localStorage.setItem("esp32_sensor_enabled", sensorEnabled ? "true" : "false");
-  } catch (e) {}
-
-  if (sensorEnabled) {
-    sendCommand("sensor on");
-    showToast("Safety Stop ARMED", "success");
-    appendLog("Sensor", "Auto Safety Stop ARMED");
-  } else {
-    sendCommand("sensor off");
-    showToast("Safety Stop DISARMED (Monitoring Active)", "info");
-    appendLog("Sensor", "Auto Safety Stop DISARMED");
-  }
-}
-
-function updateSensorConfig() {
-  const th = parseInt(document.getElementById("sens-dist-slider")?.value || 20, 10);
-  const trip = document.getElementById("sens-trip-act")?.value || "sit";
-  const clear = document.getElementById("sens-clear-act")?.value || "stand";
-  
-  const tripAudEl = document.getElementById("sens-trip-aud");
-  const clearAudEl = document.getElementById("sens-clear-aud");
-  const atrip = tripAudEl ? tripAudEl.value : "beep";
-  const aclear = clearAudEl ? clearAudEl.value : "none";
-
-  try {
-    localStorage.setItem("esp32_sens_thresh", th);
-    localStorage.setItem("esp32_sens_trip_act", trip);
-    localStorage.setItem("esp32_sens_trip_aud", atrip);
-    localStorage.setItem("esp32_sens_clear_act", clear);
-    localStorage.setItem("esp32_sens_clear_aud", aclear);
-  } catch (e) {}
-
-  sendCommand(`sens_thresh ${th}`);
-  sendCommand(`sens_actions ${trip} ${clear}`);
-  sendCommand(`sens_audio ${atrip} ${aclear}`);
-  appendLog("Config", `Sensor set -> Thresh: ${th}cm, Trip: ${trip}/${atrip}, Clear: ${clear}/${aclear}`);
-}
-
-function syncSensorToRobot() {
-  const th = parseInt(document.getElementById("sens-dist-slider")?.value || 20, 10);
-  const trip = document.getElementById("sens-trip-act")?.value || "sit";
-  const clear = document.getElementById("sens-clear-act")?.value || "stand";
-  const tripAud = document.getElementById("sens-trip-aud")?.value || "beep";
-  const clearAud = document.getElementById("sens-clear-aud")?.value || "none";
-
-  sendCommand(`sens_thresh ${th}`);
-  sendCommand(`sens_actions ${trip} ${clear}`);
-  sendCommand(`sens_audio ${tripAud} ${clearAud}`);
-
-  if (sensorEnabled) {
-    sendCommand("sensor on");
-  } else {
-    sendCommand("sensor off");
-  }
-}
-
-function startActivePolling() {
-  if (telemetryPollTimer) clearInterval(telemetryPollTimer);
-  telemetryPollTimer = setInterval(async () => {
-    if (!isConnected) return;
-    
-    await sendCommand("status");
-
-    const backend = getBleBackend();
-    if (backend?.type === "capacitor" && nativeDeviceId) {
-      try {
-        const Ble = backend.ble;
-        const res = await Ble.read({
-          deviceId: nativeDeviceId,
-          service: UART_SERVICE_UUID,
-          characteristic: UART_TX_CHAR_UUID
-        });
-        if (res) {
-          const text = universalBleDecode(res.value !== undefined ? res.value : res);
-          if (text) handleIncomingBleData(text, "READ");
-        }
-      } catch (e) {}
-    }
-  }, 1200);
-}
-
-function stopTelemetryTimers() {
-  if (telemetryPollTimer) {
-    clearInterval(telemetryPollTimer);
-    telemetryPollTimer = null;
-  }
 }
