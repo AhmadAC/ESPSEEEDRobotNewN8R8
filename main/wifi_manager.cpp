@@ -1,4 +1,4 @@
-// main\wifi_manager.cpp
+// main/wifi_manager.cpp
 #include "wifi_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -21,9 +21,12 @@ static const char *TAG = "WIFI_MGR";
 
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t udp_task_handle = NULL;
+static int s_wifi_reconnect_retries = 0;
+static const int MAX_WIFI_RECONNECT_RETRIES = 5;
+static bool s_mdns_started = false;
 
 static void dns_server_task(void *pvParameters) {
-    char rx_buffer[128];
+    char rx_buffer[512]; // Increased from 128 to prevent buffer overflow
     struct sockaddr_in dest_addr;
     dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     dest_addr.sin_family = AF_INET;
@@ -56,7 +59,7 @@ static void dns_server_task(void *pvParameters) {
             continue;
         }
 
-        if (len > 12) {
+        if (len > 12 && len < 400) { // Ensure len is within safe bounds
             rx_buffer[2] = 0x81; 
             rx_buffer[3] = 0x80;
             rx_buffer[6] = rx_buffer[4]; 
@@ -65,16 +68,18 @@ static void dns_server_task(void *pvParameters) {
             rx_buffer[10] = 0; rx_buffer[11] = 0; 
             
             int pos = len;
-            rx_buffer[pos++] = 0xC0; rx_buffer[pos++] = 0x0C;
-            rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x01;
-            rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x01;
-            rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x00;
-            rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x3C;
-            rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x04;
-            rx_buffer[pos++] = 192; rx_buffer[pos++] = 168;
-            rx_buffer[pos++] = 4; rx_buffer[pos++] = 1;
-            
-            sendto(sock, rx_buffer, pos, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+            if (pos + 14 < sizeof(rx_buffer)) {
+                rx_buffer[pos++] = 0xC0; rx_buffer[pos++] = 0x0C;
+                rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x01;
+                rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x01;
+                rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x00;
+                rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x3C;
+                rx_buffer[pos++] = 0x00; rx_buffer[pos++] = 0x04;
+                rx_buffer[pos++] = 192; rx_buffer[pos++] = 168;
+                rx_buffer[pos++] = 4; rx_buffer[pos++] = 1;
+                
+                sendto(sock, rx_buffer, pos, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+        }
         }
     }
 }
@@ -103,6 +108,7 @@ static void udp_broadcast_task(void *pvParameters) {
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        s_wifi_reconnect_retries = 0; // Reset on success
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         
         ESP_LOGI(TAG, "===============================================");
@@ -113,16 +119,26 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
         ble_manager_notify_ip(ip_str);
 
-        mdns_init();
-        mdns_hostname_set("robotdog");
-        mdns_instance_name_set("ESP32 Robot");
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+        if (!s_mdns_started) {
+            mdns_init();
+            mdns_hostname_set("robotdog");
+            mdns_instance_name_set("ESP32 Robot");
+            mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+            s_mdns_started = true;
+        }
 
         if (udp_task_handle == NULL) {
             xTaskCreate(udp_broadcast_task, "udp_bcast", 2048, NULL, 5, &udp_task_handle);
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGW(TAG, "Station disconnected from external AP. SoftAP remains active on 192.168.4.1.");
+        if (s_wifi_reconnect_retries < MAX_WIFI_RECONNECT_RETRIES) {
+            s_wifi_reconnect_retries++;
+            ESP_LOGI(TAG, "Reconnecting... (Attempt %d/%d)", s_wifi_reconnect_retries, MAX_WIFI_RECONNECT_RETRIES);
+            esp_wifi_connect();
+        } else {
+            ESP_LOGW(TAG, "Max Wi-Fi reconnect retries reached. SoftAP remains active.");
+        }
     }
 }
 
@@ -155,7 +171,6 @@ void wifi_manager_init() {
     esp_event_handler_instance_t instance_sta_disc;
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_event_handler, NULL, &instance_sta_disc));
 
-    // Configure Rock-Solid Standalone SoftAP on 192.168.4.1
     esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_netif) {
         esp_netif_ip_info_t ip_info;
@@ -171,17 +186,15 @@ void wifi_manager_init() {
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
     strcpy((char*)ap_config.ap.password, "12345678");
     ap_config.ap.ssid_len = strlen("ESPRobot_Config");
-    ap_config.ap.channel = 6; // Move to Ch 6 to avoid interference
+    ap_config.ap.channel = 6;
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ap_config.ap.beacon_interval = 100;
     ap_config.ap.ssid_hidden = 0;
     
-    // Disable PMF to guarantee visibility on older Apple/Android devices
     ap_config.ap.pmf_cfg.capable = false;
     ap_config.ap.pmf_cfg.required = false;
 
-    // Check for saved station credentials
     char saved_ssid[33] = {0};
     char saved_pass[65] = {0};
     uint8_t force_ap = 0;
@@ -214,30 +227,19 @@ void wifi_manager_init() {
         sta_config.sta.pmf_cfg.required = false;
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
 
-        // Force 20MHz bandwidth for maximum phone compatibility
         esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
-
         ESP_ERROR_CHECK(esp_wifi_start());
-        
-        // CRITICAL FIX: Disable Modem Sleep. Guarantees AP beacons never drop on battery.
         esp_wifi_set_ps(WIFI_PS_NONE);
-        
         esp_wifi_connect();
     } else {
         ESP_LOGI(TAG, "Starting pure SoftAP Mode (SSID 'ESPRobot_Config' on 192.168.4.1)");
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        
-        // Force 20MHz bandwidth for maximum phone compatibility
         esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
-        
         ESP_ERROR_CHECK(esp_wifi_start());
-        
-        // CRITICAL FIX: Disable Modem Sleep. Guarantees AP beacons never drop on battery.
         esp_wifi_set_ps(WIFI_PS_NONE);
     }
 
-    // Set stable TX power: 68 = 17 dBm (Stronger signal for battery without USB ground plane)
     int8_t tx_power = 68;
     nvs_handle_t pwr_handle;
     if (nvs_open("storage", NVS_READONLY, &pwr_handle) == ESP_OK) {
@@ -257,7 +259,6 @@ void wifi_manager_init() {
 
 char* wifi_scan_networks_json() {
     esp_wifi_scan_stop();
-    
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = true;
     
@@ -267,7 +268,6 @@ char* wifi_scan_networks_json() {
     if (scan_err == ESP_OK) {
         uint16_t ap_count = 0;
         esp_wifi_scan_get_ap_num(&ap_count);
-        
         if (ap_count > 0) {
             if (ap_count > 30) ap_count = 30;
             wifi_ap_record_t *ap_info = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * ap_count);
@@ -288,7 +288,6 @@ char* wifi_scan_networks_json() {
     
     char* json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root); 
-    
     return json_str;
 }
 
@@ -312,7 +311,6 @@ void wifi_manager_force_ap_temporary() {
     esp_wifi_disconnect();
     esp_wifi_set_mode(WIFI_MODE_AP);
     ble_manager_notify_ip("192.168.4.1");
-    
     if (dns_task_handle == NULL) {
         xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
     }
