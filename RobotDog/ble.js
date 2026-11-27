@@ -111,6 +111,10 @@ async function connectDevice() {
 
       if (Ble.addListener) {
         try {
+          await Ble.addListener("disconnected", () => {
+            appendLog("BLE", "Received disconnect event from native layer.");
+            onDisconnectedCleanup();
+          });
           await Ble.addListener("notification", (result) => {
             if (result) {
               const decoded = universalBleDecode(result.value !== undefined ? result.value : result);
@@ -195,12 +199,13 @@ function onConnectedSuccess(name) {
   appendLog("BLE", `Connected to ${name}. Telemetry active.`);
   showToast(`Connected to ${name}`, "success");
 
+  // Allow 1000ms for CoreBluetooth descriptor negotiation before issuing first commands
   setTimeout(() => {
     sendCommand("status");
-    setTimeout(() => sendCommand("cal_get"), 250);
-    setTimeout(() => sendCommand("gethw"), 500);
-    setTimeout(() => sendCommand("getswitchkeys"), 750);
-  }, 400);
+    setTimeout(() => sendCommand("cal_get"), 350);
+    setTimeout(() => sendCommand("gethw"), 700);
+    setTimeout(() => sendCommand("getswitchkeys"), 1050);
+  }, 1000);
 
   startActivePolling();
 }
@@ -228,7 +233,7 @@ async function sendCommand(commandText) {
     const nextCmd = cmdQueue.shift();
     await executeSendCommand(nextCmd);
     if (cmdQueue.length > 0) {
-      await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 50));
     }
   }
   isProcessingQueue = false;
@@ -259,23 +264,65 @@ async function executeSendCommand(commandText) {
   try {
     if (backend && backend.type === "capacitor" && nativeDeviceId) {
       const Ble = backend.ble;
+      const uint8 = new TextEncoder().encode(payload);
+      const dataViewPayload = new DataView(uint8.buffer, uint8.byteOffset, uint8.byteLength);
       const hexPayload = textToHexBytes(payload);
       const b64Payload = textToBase64(payload);
 
-      try {
-        await Ble.writeWithoutResponse({
-          deviceId: nativeDeviceId,
-          service: UART_SERVICE_UUID,
-          characteristic: UART_RX_CHAR_UUID,
-          value: hexPayload
-        });
-      } catch (writeErr) {
-        await Ble.write({
-          deviceId: nativeDeviceId,
-          service: UART_SERVICE_UUID,
-          characteristic: UART_RX_CHAR_UUID,
-          value: b64Payload
-        });
+      let writeSuccess = false;
+
+      // 1. Try standard DataView required by modern @capacitor-community/bluetooth-le
+      if (Ble.writeWithoutResponse) {
+        try {
+          await Ble.writeWithoutResponse({
+            deviceId: nativeDeviceId,
+            service: UART_SERVICE_UUID,
+            characteristic: UART_RX_CHAR_UUID,
+            value: dataViewPayload
+          });
+          writeSuccess = true;
+        } catch (e1) {}
+      }
+
+      // 2. Fall back to hex-encoded string format
+      if (!writeSuccess && Ble.writeWithoutResponse) {
+        try {
+          await Ble.writeWithoutResponse({
+            deviceId: nativeDeviceId,
+            service: UART_SERVICE_UUID,
+            characteristic: UART_RX_CHAR_UUID,
+            value: hexPayload
+          });
+          writeSuccess = true;
+        } catch (e2) {}
+      }
+
+      // 3. Fall back to standard write with DataView
+      if (!writeSuccess && Ble.write) {
+        try {
+          await Ble.write({
+            deviceId: nativeDeviceId,
+            service: UART_SERVICE_UUID,
+            characteristic: UART_RX_CHAR_UUID,
+            value: dataViewPayload
+          });
+          writeSuccess = true;
+        } catch (e3) {}
+      }
+
+      // 4. Fall back to base64 payload
+      if (!writeSuccess && Ble.write) {
+        try {
+          await Ble.write({
+            deviceId: nativeDeviceId,
+            service: UART_SERVICE_UUID,
+            characteristic: UART_RX_CHAR_UUID,
+            value: b64Payload
+          });
+          writeSuccess = true;
+        } catch (e4) {
+          throw e4;
+        }
       }
 
       txCount++;
@@ -298,7 +345,11 @@ async function executeSendCommand(commandText) {
       }
     }
   } catch (err) {
-    appendLog("Send Error", err.message || err);
+    const errMsg = err.message || String(err);
+    appendLog("Send Error", errMsg);
+    if (errMsg.toLowerCase().includes("not connected") || errMsg.toLowerCase().includes("disconnected")) {
+      onDisconnectedCleanup();
+    }
   }
 }
 

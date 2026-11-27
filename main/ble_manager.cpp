@@ -1,3 +1,4 @@
+
 // main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -165,6 +166,21 @@ static void execute_ble_command(const char* p) {
                 return;
             }
         }
+    }
+
+    if (strcmp(p, "walk") == 0 || strcmp(p, "walk forward") == 0 || strcmp(p, "walk_forward") == 0) {
+        servo_set_action("forward");
+        ble_manager_send_notify(">> Walk Forward\n");
+        return;
+    }
+    if (strcmp(p, "walk backward") == 0 || strcmp(p, "walk back") == 0 || strcmp(p, "walk_backward") == 0) {
+        servo_set_action("backward");
+        ble_manager_send_notify(">> Walk Backward\n");
+        return;
+    }
+    if (strcmp(p, "help") == 0 || strcmp(p, "info") == 0) {
+        ble_manager_send_notify(">> Commands: stand, sit, walk, backward, crawl, stop, bark, beep, status\n");
+        return;
     }
 
     if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
@@ -530,6 +546,17 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             active_conn_handle = event->connect.conn_handle;
             is_ble_connected_flag = true;
             is_subscribed_flag = false;
+            ESP_LOGI(TAG, "BLE Connected! conn_handle=%d", active_conn_handle);
+
+            // Update connection parameters to match iOS CoreBluetooth recommendations
+            struct ble_gap_upd_params params;
+            params.itvl_min = 12; // 15 ms
+            params.itvl_max = 24; // 30 ms
+            params.latency = 0;
+            params.supervision_timeout = 500; // 5000 ms (5s)
+            params.min_ce_len = 0;
+            params.max_ce_len = 0;
+            ble_gap_update_params(event->connect.conn_handle, &params);
         } else {
             active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             is_ble_connected_flag = false;
@@ -537,12 +564,15 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             ble_advertise();
         }
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
+        ESP_LOGW(TAG, "BLE Disconnected! conn_handle=%d, reason=0x%02x",
+                 event->disconnect.conn.conn_handle, event->disconnect.reason);
         active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         is_ble_connected_flag = false;
         is_subscribed_flag = false;
         ble_advertise();
     } else if (event->type == BLE_GAP_EVENT_SUBSCRIBE) {
         is_subscribed_flag = (event->subscribe.cur_notify != 0);
+        ESP_LOGI(TAG, "BLE Subscription State: %s", is_subscribed_flag ? "ENABLED" : "DISABLED");
         if (is_subscribed_flag && s_ble_cmd_queue) {
             char trig[BLE_CMD_MAX_LEN] = "status";
             xQueueSend(s_ble_cmd_queue, trig, 0);

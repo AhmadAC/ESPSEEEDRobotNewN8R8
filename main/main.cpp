@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -40,6 +41,54 @@ static const char *TAG = "MAIN";
 bool is_claw_mode = false;
 bool is_cam_mode = false;
 
+static void print_repl_help(void) {
+    printf("\n=======================================================================\n");
+    printf("                    ESP32-S3 ROBOT REPL COMMAND HELP                  \n");
+    printf("=======================================================================\n");
+    printf("[MOTION & GAITS]\n");
+    printf("  stand                   : Align joints to 90 deg standing pose\n");
+    printf("  sit                     : Fold all legs into sitting pose\n");
+    printf("  walk / forward          : Walk forward with fast diagonal trot gait\n");
+    printf("  backward / walk back    : Walk backward with diagonal trot gait\n");
+    printf("  step_forward            : Take a single forward step\n");
+    printf("  step_backward           : Take a single backward step\n");
+    printf("  stop                    : Emergency stop & relax all servos (0A draw)\n");
+    printf("  crawl                   : Low-profile crawling gait\n");
+    printf("  leap_forward            : Leap forward\n");
+    printf("  left_wave / right_wave  : Wave front left or front right leg\n");
+    printf("  back_left_wave          : Wave back left leg\n");
+    printf("  back_right_wave         : Wave back right leg\n");
+    printf("  stretch_down            : Bow stretch down\n");
+    printf("  stretch_back            : Push stretch back\n");
+    printf("\n[INDIVIDUAL JOINT CONTROL]\n");
+    printf("  hl <0-180>              : Set Front Left leg angle (e.g. 'hl 90')\n");
+    printf("  hr <0-180>              : Set Front Right leg angle\n");
+    printf("  ll <0-180>              : Set Back Left leg angle\n");
+    printf("  lr <0-180>              : Set Back Right leg angle\n");
+    printf("  all <0-180>             : Set all 4 legs to target angle\n");
+    printf("  sync on / sync off      : Synchronize paired legs in REPL\n");
+    printf("\n[AUDIO & SPEAKER (HT517)]\n");
+    printf("  bark / play             : Play embedded dog bark audio\n");
+    printf("  beep / test             : Play high-low diagnostic chime\n");
+    printf("  stop sound              : Mute and abort current sound playback\n");
+    printf("  vol <0-100>             : Set speaker volume (e.g. 'vol 80')\n");
+    printf("  pins <bclk> <lrc> <din> : Reassign I2S speaker pins (e.g. 'pins 10 11 12')\n");
+    printf("\n[ULTRASONIC SENSOR]\n");
+    printf("  sensor on / sensor off  : Arm or disarm automatic obstacle safety\n");
+    printf("  dist                    : Read live distance in centimeters\n");
+    printf("\n[SYSTEM & FLASH LOGS]\n");
+    printf("  status                  : Print robot angles, volume, pins, and state\n");
+    printf("  log / logs / cat log    : Dump entire persistent SPIFFS debug log\n");
+    printf("  log tail                : Display the last 50 lines of debug log\n");
+    printf("  log clear               : Clear persistent flash debug log\n");
+    printf("  log size                : Check debug log file size in bytes\n");
+    printf("  mode robot/claw/cam     : Switch active device operating profile\n");
+    printf("  reset                   : Factory reset NVS flash configuration\n");
+    printf("  reboot                  : Reboot the ESP32-S3 microcontroller\n");
+    printf("  help / info / ?         : Display this command manual\n");
+    printf("=======================================================================\n\n");
+}
+
 static void console_read_task(void *pvParameter) {
     usb_serial_jtag_driver_config_t usbjtag_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbjtag_cfg);
@@ -68,22 +117,31 @@ static void console_read_task(void *pvParameter) {
             if (c == 0x03) {
                 if (is_claw_mode) claw_execute_command("stop");
                 else if (!is_cam_mode) servo_set_action("stop");
+                printf("[REPL] Emergency Stop Triggered\n");
             } else if (c == '\r' || c == '\n') {
                 if (cmd_idx > 0) {
                     cmd[cmd_idx] = '\0';
- 
-                    if (strcmp(cmd, "log") == 0 || strcmp(cmd, "logs") == 0 || strcmp(cmd, "cat log") == 0) {
+
+                    // Trim leading spaces
+                    char *p = cmd;
+                    while (*p == ' ' || *p == '\t') p++;
+
+                    if (strcmp(p, "help") == 0 || strcmp(p, "?") == 0 || strcmp(p, "info") == 0 || strcmp(p, "commands") == 0) {
+                        print_repl_help();
+                    } else if (strcmp(p, "log") == 0 || strcmp(p, "logs") == 0 || strcmp(p, "cat log") == 0) {
                         logger_print_all();
-                    } else if (strcmp(cmd, "log tail") == 0) {
+                    } else if (strcmp(p, "log tail") == 0) {
                         logger_print_tail(50);
-                    } else if (strcmp(cmd, "log clear") == 0 || strcmp(cmd, "clear log") == 0) {
+                    } else if (strcmp(p, "log clear") == 0 || strcmp(p, "clear log") == 0) {
                         logger_clear();
-                    } else if (strcmp(cmd, "log size") == 0) {
+                    } else if (strcmp(p, "log size") == 0) {
                         printf("[LOGGER] Current debug log file size: %d bytes\n", (int)logger_get_size());
-                    } else if (strcmp(cmd, "reboot") == 0) {
+                    } else if (strcmp(p, "reboot") == 0) {
+                        printf("[REPL] Rebooting...\n");
                         vTaskDelay(pdMS_TO_TICKS(100));
                         esp_restart();
-                    } else if (strcmp(cmd, "reset") == 0) {
+                    } else if (strcmp(p, "reset") == 0) {
+                        printf("[REPL] Resetting NVS storage to defaults...\n");
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                             nvs_erase_all(h);
@@ -92,95 +150,170 @@ static void console_read_task(void *pvParameter) {
                         }
                         vTaskDelay(pdMS_TO_TICKS(500));
                         esp_restart();
-                    } else if (strcmp(cmd, "mode claw") == 0) {
+                    } else if (strcmp(p, "mode claw") == 0) {
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                             nvs_set_str(h, "dev_mode", "claw");
                             nvs_commit(h);
                             nvs_close(h);
                         }
+                        printf("[REPL] Profile set to CLAW. Rebooting...\n");
                         vTaskDelay(pdMS_TO_TICKS(500));
                         esp_restart();
-                    } else if (strcmp(cmd, "mode robot") == 0) {
+                    } else if (strcmp(p, "mode robot") == 0) {
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                             nvs_set_str(h, "dev_mode", "robot");
                             nvs_commit(h);
                             nvs_close(h);
                         }
+                        printf("[REPL] Profile set to ROBOT. Rebooting...\n");
                         vTaskDelay(pdMS_TO_TICKS(500));
                         esp_restart();
-                    } else if (strcmp(cmd, "mode cam") == 0) {
+                    } else if (strcmp(p, "mode cam") == 0) {
                         nvs_handle_t h;
                         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK) {
                             nvs_set_str(h, "dev_mode", "cam");
                             nvs_commit(h);
                             nvs_close(h);
                         }
+                        printf("[REPL] Profile set to CAM. Rebooting...\n");
                         vTaskDelay(pdMS_TO_TICKS(500));
                         esp_restart();
-                    } else if (strcmp(cmd, "beep") == 0 || strcmp(cmd, "test") == 0) {
+                    } else if (strcmp(p, "beep") == 0 || strcmp(p, "test") == 0) {
+                        printf("[REPL] Playing chime test...\n");
                         audio_play_test_beep();
-                    } else if (strcmp(cmd, "bark") == 0 || strcmp(cmd, "play") == 0) {
+                    } else if (strcmp(p, "bark") == 0 || strcmp(p, "play") == 0) {
+                        printf("[REPL] Playing dog bark audio...\n");
                         audio_play("dog_bark");
-                    } else if (strcmp(cmd, "stop sound") == 0) {
+                    } else if (strcmp(p, "stop sound") == 0) {
+                        printf("[REPL] Sound stopped.\n");
                         audio_stop();
-                    } else if (strncmp(cmd, "vol ", 4) == 0 || strncmp(cmd, "volume ", 7) == 0) {
-                        int req_vol = (strncmp(cmd, "vol ", 4) == 0) ? atoi(cmd + 4) : atoi(cmd + 7);
+                    } else if (strncmp(p, "vol ", 4) == 0 || strncmp(p, "volume ", 7) == 0) {
+                        int req_vol = (strncmp(p, "vol ", 4) == 0) ? atoi(p + 4) : atoi(p + 7);
                         audio_set_volume(req_vol);
-                    } else if (strncmp(cmd, "pins ", 5) == 0) {
+                        printf("[REPL] Volume set to %d%%\n", req_vol);
+                    } else if (strncmp(p, "pins ", 5) == 0) {
                         int b = 0, l = 0, d = 0;
-                        if (sscanf(cmd + 5, "%d %d %d", &b, &l, &d) == 3) {
+                        if (sscanf(p + 5, "%d %d %d", &b, &l, &d) == 3) {
                             audio_set_pins(b, l, d);
+                            printf("[REPL] Audio pins updated: BCLK=%d, LRC=%d, DIN=%d\n", b, l, d);
                         }
-                    } else if (strcmp(cmd, "status") == 0) {
+                    } else if (strcmp(p, "dist") == 0) {
+                        printf("[SENSOR] Distance: %.1f cm (Safety: %s)\n",
+                               (double)sensor_get_distance(), sensor_is_enabled() ? "ARMED" : "DISABLED");
+                    } else if (strcmp(p, "status") == 0) {
                         int bclk = 10, lrc = 11, din = 12;
                         audio_get_pins(&bclk, &lrc, &din);
-                        int ll, hr, hl, lr;
+                        int ll = 90, hr = 90, hl = 90, lr = 90;
                         servo_get_angles(&ll, &hr, &hl, &lr);
-                        ESP_LOGI("REPL", "Servos(LL:%d, HR:%d, HL:%d, LR:%d) | Vol:%d%% | Audio Pins: BCLK=%d, LRC=%d, DIN=%d",
-                                 ll, hr, hl, lr, audio_get_volume(), bclk, lrc, din);
+                        printf("[STATUS] Servos(LL:%d, HR:%d, HL:%d, LR:%d) | Vol:%d%% | Audio(BCLK:%d, LRC:%d, DIN:%d) | Sensor: %.1f cm (%s)\n",
+                               ll, hr, hl, lr, audio_get_volume(), bclk, lrc, din,
+                               (double)sensor_get_distance(), sensor_is_enabled() ? "ARMED" : "DISABLED");
                     } else if (is_claw_mode) {
                         bool is_numeric = true;
-                        int cmd_len = strlen(cmd);
+                        int cmd_len = strlen(p);
                         for (int j = 0; j < cmd_len; j++) {
-                            if (cmd[j] < '0' || cmd[j] > '9') {
+                            if (p[j] < '0' || p[j] > '9') {
                                 is_numeric = false;
                                 break;
                             }
                         }
-                        if (strncmp(cmd, "angle ", 6) == 0) {
-                            claw_set_angle(atoi(cmd + 6));
+                        if (strncmp(p, "angle ", 6) == 0) {
+                            int a = atoi(p + 6);
+                            claw_set_angle(a);
+                            printf("[REPL] Claw angle set to %d\n", a);
                         } else if (is_numeric && cmd_len > 0) {
-                            claw_set_angle(atoi(cmd));
-                        } else if (strcmp(cmd, "half") == 0) {
+                            int a = atoi(p);
+                            claw_set_angle(a);
+                            printf("[REPL] Claw angle set to %d\n", a);
+                        } else if (strcmp(p, "half") == 0) {
                             claw_execute_command("half_open");
+                            printf("[REPL] Claw half-opened\n");
                         } else {
-                            claw_execute_command(cmd);
+                            claw_execute_command(p);
+                            printf("[REPL] Claw command: %s\n", p);
                         }
                     } else if (!is_cam_mode) {
                         int ang = 0;
-                        if (strcmp(cmd, "sit") == 0 || strcmp(cmd, "stand") == 0 || strcmp(cmd, "forward") == 0 ||
-                            strcmp(cmd, "backward") == 0 || strcmp(cmd, "step_forward") == 0 || strcmp(cmd, "step_backward") == 0 ||
-                            strcmp(cmd, "stop") == 0 || strcmp(cmd, "crawl") == 0 || strcmp(cmd, "left_wave") == 0 ||
-                            strcmp(cmd, "right_wave") == 0 || strcmp(cmd, "back_left_wave") == 0 || strcmp(cmd, "back_right_wave") == 0 ||
-                            strcmp(cmd, "stretch_down") == 0 || strcmp(cmd, "stretch_back") == 0 || strcmp(cmd, "leap_forward") == 0) {
-                            servo_set_action(cmd);
-                        }
-                        else if (sscanf(cmd, "ll %d", &ang) == 1) { servo_set_target("low_left", ang); if(repl_sync) servo_set_target("low_right", ang); }
-                        else if (sscanf(cmd, "lr %d", &ang) == 1) { servo_set_target("low_right", ang); if(repl_sync) servo_set_target("low_left", ang); }
-                        else if (sscanf(cmd, "hl %d", &ang) == 1) { servo_set_target("high_left", ang); if(repl_sync) servo_set_target("high_right", ang); }
-                        else if (sscanf(cmd, "hr %d", &ang) == 1) { servo_set_target("high_right", ang); if(repl_sync) servo_set_target("high_left", ang); }
-                        else if (sscanf(cmd, "all %d", &ang) == 1) { servo_set_target("all", ang); }
-                        else if (strcmp(cmd, "sync on") == 0) { repl_sync = true; }
-                        else if (strcmp(cmd, "sync off") == 0) { repl_sync = false; }
-                        else if (strcmp(cmd, "sensor on") == 0) {
+                        if (strcmp(p, "walk") == 0 || strcmp(p, "forward") == 0 || strcmp(p, "walk forward") == 0 || strcmp(p, "walk_forward") == 0) {
+                            printf("[REPL] Action: walk forward (fast trot)\n");
+                            servo_set_action("forward");
+                        } else if (strcmp(p, "backward") == 0 || strcmp(p, "walk back") == 0 || strcmp(p, "walk backward") == 0 || strcmp(p, "walk_backward") == 0) {
+                            printf("[REPL] Action: walk backward (fast trot)\n");
+                            servo_set_action("backward");
+                        } else if (strcmp(p, "stand") == 0) {
+                            printf("[REPL] Action: stand\n");
+                            servo_set_action("stand");
+                        } else if (strcmp(p, "sit") == 0) {
+                            printf("[REPL] Action: sit\n");
+                            servo_set_action("sit");
+                        } else if (strcmp(p, "step_forward") == 0 || strcmp(p, "step") == 0) {
+                            printf("[REPL] Action: step forward\n");
+                            servo_set_action("step_forward");
+                        } else if (strcmp(p, "step_backward") == 0) {
+                            printf("[REPL] Action: step backward\n");
+                            servo_set_action("step_backward");
+                        } else if (strcmp(p, "stop") == 0) {
+                            printf("[REPL] Action: stop (servos relaxed)\n");
+                            servo_set_action("stop");
+                        } else if (strcmp(p, "crawl") == 0) {
+                            printf("[REPL] Action: crawl\n");
+                            servo_set_action("crawl");
+                        } else if (strcmp(p, "left_wave") == 0) {
+                            printf("[REPL] Action: left wave\n");
+                            servo_set_action("left_wave");
+                        } else if (strcmp(p, "right_wave") == 0) {
+                            printf("[REPL] Action: right wave\n");
+                            servo_set_action("right_wave");
+                        } else if (strcmp(p, "back_left_wave") == 0) {
+                            printf("[REPL] Action: back left wave\n");
+                            servo_set_action("back_left_wave");
+                        } else if (strcmp(p, "back_right_wave") == 0) {
+                            printf("[REPL] Action: back right wave\n");
+                            servo_set_action("back_right_wave");
+                        } else if (strcmp(p, "stretch_down") == 0) {
+                            printf("[REPL] Action: stretch down\n");
+                            servo_set_action("stretch_down");
+                        } else if (strcmp(p, "stretch_back") == 0) {
+                            printf("[REPL] Action: stretch back\n");
+                            servo_set_action("stretch_back");
+                        } else if (strcmp(p, "leap_forward") == 0 || strcmp(p, "leap") == 0) {
+                            printf("[REPL] Action: leap forward\n");
+                            servo_set_action("leap_forward");
+                        } else if (sscanf(p, "ll %d", &ang) == 1) { 
+                            servo_set_target("low_left", ang); 
+                            if (repl_sync) servo_set_target("low_right", ang); 
+                            printf("[REPL] Joint LL: %d deg\n", ang);
+                        } else if (sscanf(p, "lr %d", &ang) == 1) { 
+                            servo_set_target("low_right", ang); 
+                            if (repl_sync) servo_set_target("low_left", ang); 
+                            printf("[REPL] Joint LR: %d deg\n", ang);
+                        } else if (sscanf(p, "hl %d", &ang) == 1) { 
+                            servo_set_target("high_left", ang); 
+                            if (repl_sync) servo_set_target("high_right", ang); 
+                            printf("[REPL] Joint HL: %d deg\n", ang);
+                        } else if (sscanf(p, "hr %d", &ang) == 1) { 
+                            servo_set_target("high_right", ang); 
+                            if (repl_sync) servo_set_target("high_left", ang); 
+                            printf("[REPL] Joint HR: %d deg\n", ang);
+                        } else if (sscanf(p, "all %d", &ang) == 1) { 
+                            servo_set_target("all", ang); 
+                            printf("[REPL] All Joints: %d deg\n", ang);
+                        } else if (strcmp(p, "sync on") == 0) { 
+                            repl_sync = true; 
+                            printf("[REPL] Leg Joint Sync ON\n");
+                        } else if (strcmp(p, "sync off") == 0) { 
+                            repl_sync = false; 
+                            printf("[REPL] Leg Joint Sync OFF\n");
+                        } else if (strcmp(p, "sensor on") == 0) {
                             sensor_set_enabled(true);
-                            ESP_LOGI("REPL", "Sensor ENABLED");
-                        }
-                        else if (strcmp(cmd, "sensor off") == 0) {
+                            printf("[REPL] Sensor Safety ARMED\n");
+                        } else if (strcmp(p, "sensor off") == 0) {
                             sensor_set_enabled(false);
-                            ESP_LOGI("REPL", "Sensor DISABLED");
+                            printf("[REPL] Sensor Safety DISARMED\n");
+                        } else {
+                            printf("[REPL] Unknown command: '%s'. Type 'help' for available commands.\n", p);
                         }
                     }
                     cmd_idx = 0;
@@ -292,5 +425,5 @@ extern "C" void app_main(void) {
     // 8. Console Task
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "Boot Sequence Complete!");
+    ESP_LOGI(TAG, "Boot Sequence Complete! Type 'help' in terminal for commands.");
 }
