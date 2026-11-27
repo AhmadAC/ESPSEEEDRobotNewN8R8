@@ -62,7 +62,9 @@ bool ble_manager_is_connected(void) {
 }
 
 void ble_manager_send_notify(const char* message) {
-    if (!is_ble_connected_flag || active_conn_handle == BLE_HS_CONN_HANDLE_NONE || !s_tx_val_handle || !message) {
+    if (!is_ble_connected_flag || !is_subscribed_flag ||
+        active_conn_handle == BLE_HS_CONN_HANDLE_NONE ||
+        !s_tx_val_handle || !message) {
         return;
     }
     size_t len = strlen(message);
@@ -71,7 +73,10 @@ void ble_manager_send_notify(const char* message) {
         size_t send_len = (len - i > chunk_size) ? chunk_size : (len - i);
         struct os_mbuf *om = ble_hs_mbuf_from_flat(message + i, send_len);
         if (om != NULL) {
-            ble_gatts_notify_custom(active_conn_handle, s_tx_val_handle, om);
+            int rc = ble_gatts_notify_custom(active_conn_handle, s_tx_val_handle, om);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Notify failed: rc=%d", rc);
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -80,6 +85,7 @@ void ble_manager_send_notify(const char* message) {
 void ble_manager_notify_ip(const char* ip) {
     if (ip && strlen(ip) > 0) {
         strncpy(current_ip, ip, sizeof(current_ip) - 1);
+        current_ip[sizeof(current_ip) - 1] = '\0';
         char msg[64];
         snprintf(msg, sizeof(msg), "IP:%s\n", current_ip);
         ble_manager_send_notify(msg);
@@ -91,7 +97,7 @@ void ble_manager_send_status(const char* status_json) {
 }
 
 static void send_full_status(void) {
-    if (!is_ble_connected_flag) return;
+    if (!is_ble_connected_flag || !is_subscribed_flag) return;
 
     int ll = 90, hr = 90, hl = 90, lr = 90;
     int oll = 0, ohr = 0, ohl = 0, olr = 0;
@@ -147,13 +153,15 @@ static void execute_ble_command(const char* p) {
 
     if (strncmp(p, "wifi:", 5) == 0 || strncmp(p, "w:", 2) == 0) {
         const char* creds = (strncmp(p, "wifi:", 5) == 0) ? (p + 5) : (p + 2);
-        char* comma = strchr(creds, ',');
+        const char* comma = strchr(creds, ',');
         if (comma) {
             char ssid[33] = {0}, pass[65] = {0};
-            size_t s_len = comma - creds;
+            size_t s_len = static_cast<size_t>(comma - creds);
             if (s_len < sizeof(ssid)) {
-                strncpy(ssid, creds, s_len);
+                memcpy(ssid, creds, s_len);
+                ssid[s_len] = '\0';
                 strncpy(pass, comma + 1, sizeof(pass) - 1);
+                pass[sizeof(pass) - 1] = '\0';
                 wifi_save_credentials(ssid, pass);
                 wifi_manager_connect_async(ssid, pass);
                 ble_manager_send_notify(">> Wi-Fi Saved. Connecting...\n");
@@ -336,7 +344,10 @@ static void execute_ble_command(const char* p) {
         for (int i = 0; i < 16; i++) {
             char val[64] = {0}, k[16]; size_t len = sizeof(val);
             snprintf(k, sizeof(k), "sw_%d", i);
-            if (!nvs_ok || nvs_get_str(handle, k, val, &len) != ESP_OK) strncpy(val, DEFAULT_SWITCH_COMMANDS[i], sizeof(val) - 1);
+            if (!nvs_ok || nvs_get_str(handle, k, val, &len) != ESP_OK) {
+                strncpy(val, DEFAULT_SWITCH_COMMANDS[i], sizeof(val) - 1);
+                val[sizeof(val) - 1] = '\0';
+            }
             char line[128]; snprintf(line, sizeof(line), "SWKEY:%d=%.80s\n", i, val);
             ble_manager_send_notify(line);
         }
@@ -375,12 +386,8 @@ static void execute_ble_command(const char* p) {
         const char *v_str = (strncmp(p, "vol ", 4) == 0) ? (p + 4) : (p + 7);
         while (*v_str == ' ') v_str++;
         int tv = (v_str[0] == '+' || v_str[0] == '-') ? (audio_get_volume() + atoi(v_str)) : atoi(v_str);
-        if (tv < 0) {
-            tv = 0;
-        }
-        if (tv > 100) {
-            tv = 100;
-        }
+        if (tv < 0) tv = 0;
+        if (tv > 100) tv = 100;
         audio_set_volume(tv);
         char msg[64];
         snprintf(msg, sizeof(msg), ">> Volume: %d%%\n", tv);
@@ -399,7 +406,9 @@ static void execute_ble_command(const char* p) {
     if (strcmp(p, "cam_flip") == 0) { cam_toggle_flip(); ble_manager_send_notify(">> Cam Flipped\n"); return; }
 
     bool is_num = true;
-    for (int i = 0; p[i] != '\0'; i++) { if (!isdigit((unsigned char)p[i])) { is_num = false; break; } }
+    for (int i = 0; p[i] != '\0'; i++) {
+        if (!isdigit((unsigned char)p[i])) { is_num = false; break; }
+    }
     if (is_num || strncmp(p, "angle ", 6) == 0) {
         int ang = is_num ? atoi(p) : atoi(p + 6);
         if (is_claw_mode) claw_set_angle(ang);
@@ -423,10 +432,14 @@ static void execute_ble_command(const char* p) {
         if (sen_th) sensor_set_threshold(sen_th->valueint);
         cJSON *sen_trip = cJSON_GetObjectItem(json, "sensor_tripped_action");
         cJSON *sen_clear = cJSON_GetObjectItem(json, "sensor_cleared_action");
-        if (sen_trip && sen_clear && sen_trip->valuestring && sen_clear->valuestring) sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
+        if (sen_trip && sen_clear && sen_trip->valuestring && sen_clear->valuestring) {
+            sensor_set_actions(sen_trip->valuestring, sen_clear->valuestring);
+        }
         cJSON *sen_atrip = cJSON_GetObjectItem(json, "sensor_tripped_audio");
         cJSON *sen_aclear = cJSON_GetObjectItem(json, "sensor_cleared_audio");
-        if (sen_atrip && sen_aclear && sen_atrip->valuestring && sen_aclear->valuestring) sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
+        if (sen_atrip && sen_aclear && sen_atrip->valuestring && sen_aclear->valuestring) {
+            sensor_set_audio_actions(sen_atrip->valuestring, sen_aclear->valuestring);
+        }
         cJSON_Delete(json);
         ble_manager_send_notify(">> JSON Handled\n");
         send_full_status();
@@ -448,7 +461,7 @@ static void ble_cmd_worker_task(void *pvParameters) {
         if (xQueueReceive(s_ble_cmd_queue, cmd_buf, pdMS_TO_TICKS(350)) == pdTRUE) {
             execute_ble_command(cmd_buf);
         }
-        if (is_ble_connected_flag) {
+        if (is_ble_connected_flag && is_subscribed_flag) {
             TickType_t now = xTaskGetTickCount();
             if ((now - last_tick) >= pdMS_TO_TICKS(350)) {
                 last_tick = now;
@@ -470,10 +483,14 @@ static int gatt_svr_chr_access_rx(uint16_t conn, uint16_t attr, struct ble_gatt_
         if (om_len >= sizeof(buf)) om_len = sizeof(buf) - 1;
         if (ble_hs_mbuf_to_flat(ctxt->om, buf, om_len, NULL) == 0) {
             buf[om_len] = '\0';
-            while (om_len > 0 && (buf[om_len - 1] == '\r' || buf[om_len - 1] == '\n')) buf[--om_len] = '\0';
+            while (om_len > 0 && (buf[om_len - 1] == '\r' || buf[om_len - 1] == '\n')) {
+                buf[--om_len] = '\0';
+            }
             char *ptr = buf;
             while (*ptr == ' ' || *ptr == '\t') ptr++;
-            if (*ptr != '\0' && s_ble_cmd_queue) xQueueSend(s_ble_cmd_queue, ptr, 0);
+            if (*ptr != '\0' && s_ble_cmd_queue) {
+                xQueueSend(s_ble_cmd_queue, ptr, 0);
+            }
         }
     }
     return 0;
@@ -491,19 +508,34 @@ static int gatt_svr_chr_access_tx(uint16_t conn, uint16_t attr, struct ble_gatt_
     return 0;
 }
 
-// CRITICAL FIX: Positional initialization to avoid -Wmissing-field-initializers
 static const struct ble_gatt_chr_def gatt_svr_chrs[] = {
-    { &gatt_svr_chr_rx_uuid.u, gatt_svr_chr_access_rx, BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP, NULL, NULL, 0, NULL, NULL },
-    { &gatt_svr_chr_tx_uuid.u, gatt_svr_chr_access_tx, BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY, NULL, NULL, 0, &s_tx_val_handle, NULL },
-    { NULL, NULL, 0, NULL, NULL, 0, NULL, NULL }
+    {
+        .uuid = &gatt_svr_chr_rx_uuid.u,
+        .access_cb = gatt_svr_chr_access_rx,
+        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+        .val_handle = NULL,
+    },
+    {
+        .uuid = &gatt_svr_chr_tx_uuid.u,
+        .access_cb = gatt_svr_chr_access_tx,
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+        .val_handle = &s_tx_val_handle,
+    },
+    {0}
 };
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
-    { BLE_GATT_SVC_TYPE_PRIMARY, &gatt_svr_svc_uart_uuid.u, gatt_svr_chrs, NULL },
-    { 0, NULL, NULL, NULL }
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &gatt_svr_svc_uart_uuid.u,
+        .includes = NULL,
+        .characteristics = gatt_svr_chrs,
+    },
+    {0}
 };
 
 static void ble_advertise(void);
+
 static int ble_gap_event(struct ble_gap_event *event, void *arg) {
     if (event->type == BLE_GAP_EVENT_CONNECT) {
         if (event->connect.status == 0) {
@@ -512,17 +544,19 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
             is_subscribed_flag = false;
         } else {
             active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-            is_ble_connected_flag = is_subscribed_flag = false;
+            is_ble_connected_flag = false;
+            is_subscribed_flag = false;
             ble_advertise();
         }
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         active_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        is_ble_connected_flag = is_subscribed_flag = false;
+        is_ble_connected_flag = false;
+        is_subscribed_flag = false;
         ble_advertise();
     } else if (event->type == BLE_GAP_EVENT_SUBSCRIBE) {
         is_subscribed_flag = (event->subscribe.cur_notify != 0);
         if (is_subscribed_flag && s_ble_cmd_queue) {
-            const char *trig = "status";
+            char trig[BLE_CMD_MAX_LEN] = "status";
             xQueueSend(s_ble_cmd_queue, trig, 0);
         }
     }
@@ -532,6 +566,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
 static void ble_advertise(void) {
     struct ble_gap_adv_params adv_params;
     struct ble_hs_adv_fields fields, rsp_fields;
+
     memset(&fields, 0, sizeof(fields));
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.name = (uint8_t *)DEVICE_NAME;
@@ -556,8 +591,13 @@ static void ble_host_task(void *param) {
     nimble_port_freertos_deinit();
 }
 
-static void ble_on_sync(void) { ble_advertise(); }
-static void ble_on_reset(int reason) { ESP_LOGE(TAG, "BLE reset: %d", reason); }
+static void ble_on_sync(void) {
+    ble_advertise();
+}
+
+static void ble_on_reset(int reason) {
+    ESP_LOGE(TAG, "BLE reset: %d", reason);
+}
 
 void ble_manager_init(void) {
     if (!s_ble_cmd_queue) {
