@@ -1,3 +1,5 @@
+
+
 #include "sensor_monitor.h"
 #include "servo_controller.h"
 #include "audio_player.h"
@@ -17,8 +19,8 @@ static const char *TAG = "SENSOR";
 static int32_t current_trig_pin = 5;
 static int32_t current_echo_pin = 6;
 
-// Enabled by default
-static bool sensor_safety_enabled = true;
+// Disabled automatically by default on startup
+static bool sensor_safety_enabled = false;
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20;
 static int32_t reaction_delay = 0;
@@ -31,13 +33,6 @@ static char cleared_action[16] = "stand";
 static char tripped_audio[16] = "beep";
 static char cleared_audio[16] = "none";
 
-// Diagnostic and auto-swap state tracking
-static const char *last_fail_reason = "Initializing";
-static int consecutive_fails = 0;
-static int consecutive_successes = 0;
-static bool pins_were_swapped = false;
-static int64_t last_diag_log_time = 0;
-
 static void load_sensor_nvs() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
@@ -46,11 +41,11 @@ static void load_sensor_nvs() {
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
         nvs_get_i32(my_handle, "sens_react", &reaction_delay);
 
-        uint8_t en = 1;
+        uint8_t en = 0; // Default: disabled
         if (nvs_get_u8(my_handle, "sens_en", &en) == ESP_OK) {
             sensor_safety_enabled = (en != 0);
         } else {
-            sensor_safety_enabled = true;
+            sensor_safety_enabled = false;
         }
 
         size_t len = sizeof(tripped_action);
@@ -99,7 +94,7 @@ static void configure_sensor_gpios() {
 }
 
 static float read_ultrasonic_distance() {
-    // 1. If Echo is stuck HIGH from an unhandled bounce, pulse it LOW to force a reset
+    // If Echo line is stuck HIGH, release it
     if (gpio_get_level((gpio_num_t)current_echo_pin) != 0) {
         gpio_set_direction((gpio_num_t)current_echo_pin, GPIO_MODE_OUTPUT);
         gpio_set_level((gpio_num_t)current_echo_pin, 0);
@@ -108,29 +103,24 @@ static float read_ultrasonic_distance() {
         esp_rom_delay_us(10);
     }
 
-    // 2. Ensure Trig line is LOW
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
     esp_rom_delay_us(4);
 
-    // 3. Always fire the 15us HIGH trigger pulse
+    // 15us HIGH trigger pulse
     gpio_set_level((gpio_num_t)current_trig_pin, 1);
     esp_rom_delay_us(15);
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
-    // 4. Wait for Echo to rise HIGH (sensor begins 40kHz sonic burst)
     int64_t wait_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 0) {
-        if (esp_timer_get_time() - wait_start > 30000) {
-            last_fail_reason = "Echo never went HIGH (no pulse / check Trig wire)";
+        if (esp_timer_get_time() - wait_start > 25000) {
             return -1.0f;
         }
     }
 
-    // 5. Measure return pulse width until line drops LOW
     int64_t echo_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 1) {
-        if (esp_timer_get_time() - echo_start > 35000) {
-            last_fail_reason = "Echo stayed HIGH too long (>35ms)";
+        if (esp_timer_get_time() - echo_start > 30000) {
             return -1.0f;
         }
     }
@@ -138,37 +128,15 @@ static float read_ultrasonic_distance() {
     int64_t duration = echo_end - echo_start;
 
     if (duration < 60 || duration > 30000) {
-        last_fail_reason = "Pulse duration out of bounds";
         return -1.0f;
     }
 
     float distance = (float)duration / 58.0f;
     if (distance > 400.0f || distance < 2.0f) {
-        last_fail_reason = "Distance outside 2-400cm";
         return -1.0f;
     }
 
-    last_fail_reason = "OK";
     return distance;
-}
-
-static void perform_auto_pin_swap(void) {
-    int32_t tmp = current_trig_pin;
-    current_trig_pin = current_echo_pin;
-    current_echo_pin = tmp;
-    pins_were_swapped = true;
-    consecutive_fails = 0;
-    consecutive_successes = 0;
-
-    configure_sensor_gpios();
-
-    ESP_LOGW(TAG, "No echo detected. Auto-swapping pins -> Trig=GPIO%ld, Echo=GPIO%ld",
-             (long)current_trig_pin, (long)current_echo_pin);
-
-    char swap_msg[96];
-    snprintf(swap_msg, sizeof(swap_msg), ">> [SENSOR] Swapped to Trig=GPIO%ld, Echo=GPIO%ld\n",
-             (long)current_trig_pin, (long)current_echo_pin);
-    ble_manager_send_notify(swap_msg);
 }
 
 static void ultrasonic_safety_task(void *pvParameter) {
@@ -177,101 +145,47 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int64_t last_detection_time = 0;
     int consecutive_detections = 0;
 
-    ESP_LOGI(TAG, "HC-SR04 task running (Trig=GPIO%ld, Echo=GPIO%ld, Safety=%s)",
-             (long)current_trig_pin, (long)current_echo_pin, sensor_safety_enabled ? "ARMED" : "PASSIVE");
-
     while (1) {
-        float dist = read_ultrasonic_distance();
-        current_distance = dist;
-
-        int64_t now = esp_timer_get_time();
-
-        if (dist > 0.0f) {
-            consecutive_fails = 0;
-            consecutive_successes++;
-
-            // If auto-swap verified working pins, save to NVS flash
-            if (consecutive_successes == 3 && pins_were_swapped) {
-                pins_were_swapped = false;
-                nvs_handle_t my_handle;
-                if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
-                    nvs_set_i32(my_handle, "sens_trig", current_trig_pin);
-                    nvs_set_i32(my_handle, "sens_echo", current_echo_pin);
-                    nvs_commit(my_handle);
-                    nvs_close(my_handle);
-                }
-
-                ESP_LOGI(TAG, "Pins confirmed working! Locked Trig=GPIO%ld, Echo=GPIO%ld (%.1f cm)",
-                         (long)current_trig_pin, (long)current_echo_pin, dist);
-
-                char lock_msg[96];
-                snprintf(lock_msg, sizeof(lock_msg), ">> [SENSOR] Locked pins: Trig=%ld, Echo=%ld (%.1fcm)\n",
-                         (long)current_trig_pin, (long)current_echo_pin, dist);
-                ble_manager_send_notify(lock_msg);
-            }
-
-            // Status output every 2 seconds
-            if (now - last_diag_log_time > 2000000) {
-                last_diag_log_time = now;
-                ESP_LOGI(TAG, "Distance: %.1f cm (Trig=%ld, Echo=%ld)", dist, (long)current_trig_pin, (long)current_echo_pin);
-            }
-        } else {
-            consecutive_successes = 0;
-            consecutive_fails++;
-
-            // Diagnostic reporting every 1.5 seconds on failure
-            if (now - last_diag_log_time > 1500000) {
-                last_diag_log_time = now;
-                ESP_LOGW(TAG, "Ping failed on Trig=GPIO%ld, Echo=GPIO%ld: %s (fails: %d)",
-                         (long)current_trig_pin, (long)current_echo_pin, last_fail_reason, consecutive_fails);
-
-                char fail_msg[96];
-                snprintf(fail_msg, sizeof(fail_msg), ">> [SENSOR] Trig=%ld Echo=%ld: %s\n",
-                         (long)current_trig_pin, (long)current_echo_pin, last_fail_reason);
-                ble_manager_send_notify(fail_msg);
-            }
-
-            // Auto-swap after 20 consecutive fails (~2 seconds)
-            if (consecutive_fails >= 20) {
-                perform_auto_pin_swap();
-            }
-        }
-
-        // Autonomous obstacle avoidance intervention
-        if (sensor_safety_enabled) {
-            if (dist > 0.0f && dist < (float)distance_threshold) {
-                consecutive_detections++;
-                if (consecutive_detections >= 2) {
-                    safety_lock_engaged = true;
-                    last_detection_time = esp_timer_get_time();
-                }
-            } else {
-                consecutive_detections = 0;
-                if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1500000)) {
-                    safety_lock_engaged = false;
-                }
-            }
-
-            if (safety_lock_engaged != last_lock_state) {
-                if (reaction_delay > 0) {
-                    vTaskDelay(pdMS_TO_TICKS(reaction_delay));
-                }
-                if (safety_lock_engaged) {
-                    ESP_LOGW(TAG, "Obstacle trip (%.1fcm < %ldcm)! Action: %s | Audio: %s",
-                             dist, (long)distance_threshold, tripped_action, tripped_audio);
-                    if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
-                    if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
-                } else {
-                    ESP_LOGI(TAG, "Obstacle cleared. Action: %s | Audio: %s", cleared_action, cleared_audio);
-                    if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
-                    if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
-                }
-                last_lock_state = safety_lock_engaged;
-            }
-        } else {
+        if (!sensor_safety_enabled) {
+            current_distance = -1.0f;
             safety_lock_engaged = false;
             last_lock_state = false;
             consecutive_detections = 0;
+            vTaskDelay(pdMS_TO_TICKS(300));
+            continue;
+        }
+
+        float dist = read_ultrasonic_distance();
+        current_distance = dist;
+
+        if (dist > 0.0f && dist < (float)distance_threshold) {
+            consecutive_detections++;
+            if (consecutive_detections >= 2) {
+                safety_lock_engaged = true;
+                last_detection_time = esp_timer_get_time();
+            }
+        } else {
+            consecutive_detections = 0;
+            if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1500000)) {
+                safety_lock_engaged = false;
+            }
+        }
+
+        if (safety_lock_engaged != last_lock_state) {
+            if (reaction_delay > 0) {
+                vTaskDelay(pdMS_TO_TICKS(reaction_delay));
+            }
+            if (safety_lock_engaged) {
+                ESP_LOGW(TAG, "Obstacle trip (%.1fcm < %ldcm)! Action: %s | Audio: %s",
+                         dist, (long)distance_threshold, tripped_action, tripped_audio);
+                if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
+                if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
+            } else {
+                ESP_LOGI(TAG, "Obstacle cleared. Action: %s | Audio: %s", cleared_action, cleared_audio);
+                if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
+                if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
+            }
+            last_lock_state = safety_lock_engaged;
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -282,8 +196,8 @@ void sensor_monitor_init() {
     load_sensor_nvs();
     configure_sensor_gpios();
 
-    xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 3, &sensor_task_handle, 1);
-    ESP_LOGI(TAG, "Ultrasonic HC-SR04 initialized on Trig=GPIO%ld, Echo=GPIO%ld",
+    xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 3072, NULL, 3, &sensor_task_handle, 1);
+    ESP_LOGI(TAG, "Ultrasonic HC-SR04 initialized (Trig=GPIO%ld, Echo=GPIO%ld, Safety=DISABLED)",
              (long)current_trig_pin, (long)current_echo_pin);
 }
 
@@ -291,9 +205,6 @@ void sensor_set_pins(int trig, int echo) {
     if (trig <= 0 || echo <= 0 || trig == echo) return;
     current_trig_pin = trig;
     current_echo_pin = echo;
-    consecutive_fails = 0;
-    consecutive_successes = 0;
-    pins_were_swapped = false;
 
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
@@ -318,6 +229,7 @@ void sensor_set_enabled(bool enabled) {
     sensor_safety_enabled = enabled;
     if (!enabled) {
         safety_lock_engaged = false;
+        current_distance = -1.0f;
     }
 
     nvs_handle_t my_handle;

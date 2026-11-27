@@ -1,3 +1,4 @@
+
 // main/web_html_robot_controls.cpp
 #include "web_html.h"
 
@@ -144,7 +145,7 @@ const char html_part2[] = R"raw_html(
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #38bdf8;'>
                 <label>Sensor Toggle Status:</label>
-                <button id='btn_sensor' onclick='toggleSensor()' class='btn-blue'>ARM SAFETY STOP</button>
+                <button id='btn_sensor' onclick='toggleSensor()' class='btn-gray'>ARM SAFETY STOP</button>
                 <p style='font-size: 16px; margin-top: 15px;'>Live Distance: <span id='live_dist' style='font-weight: bold; color: var(--primary);'>--</span> cm</p>
             </div>
             <div class='ctrl-group' style='border-left-color: #8b5cf6;'>

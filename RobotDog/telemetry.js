@@ -1,10 +1,11 @@
-let sensorEnabled = true;
+
+let sensorEnabled = false;
 let isObstacleTripped = false;
 let telemetryPollTimer = null;
 
 function initSensorStorage() {
-  sensorEnabled = true;
-  updateSensorState(true);
+  sensorEnabled = false;
+  updateSensorState(false);
 
   try {
     const th = localStorage.getItem("esp32_sens_thresh");
@@ -32,7 +33,7 @@ function initSensorStorage() {
     const clearAud = localStorage.getItem("esp32_sens_clear_aud");
     if (clearAud) {
       const el = document.getElementById("sens-clear-aud");
-      if (el) el.value = clearAud;
+      if (clearAud) el.value = clearAud;
     }
   } catch (e) {}
 }
@@ -42,7 +43,7 @@ function updateSensorState(enabled) {
   const btn = document.getElementById("sensor-toggle-btn");
   if (btn) {
     btn.innerText = sensorEnabled ? "ENABLED" : "DISABLED";
-    btn.style.background = sensorEnabled ? "#10b981" : "#ef4444";
+    btn.style.background = sensorEnabled ? "#10b981" : "#475569";
   }
 
   if (!sensorEnabled) {
@@ -151,7 +152,7 @@ function toggleSensor() {
     appendLog("Sensor", "Command: sensor on (ARMED)");
   } else {
     sendCommand("sensor off");
-    showToast("Obstacle Safety DISARMED", "warn");
+    showToast("Obstacle Safety DISARMED", "info");
     appendLog("Sensor", "Command: sensor off (STANDBY)");
   }
 }
