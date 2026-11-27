@@ -17,7 +17,7 @@ static const char *TAG = "SENSOR";
 static int32_t current_trig_pin = 5;
 static int32_t current_echo_pin = 6;
 
-// Enabled by default as requested
+// Enabled by default
 static bool sensor_safety_enabled = true;
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20;
@@ -99,33 +99,34 @@ static void configure_sensor_gpios() {
 }
 
 static float read_ultrasonic_distance() {
-    gpio_set_level((gpio_num_t)current_trig_pin, 0);
-
-    // 1. Wait for Echo to be LOW before firing (drain any lingering pulse)
-    int64_t settle_start = esp_timer_get_time();
-    while (gpio_get_level((gpio_num_t)current_echo_pin) != 0) {
-        if (esp_timer_get_time() - settle_start > 30000) {
-            last_fail_reason = "Echo line stuck HIGH before ping";
-            return -1.0f;
-        }
+    // 1. If Echo is stuck HIGH from an unhandled bounce, pulse it LOW to force a reset
+    if (gpio_get_level((gpio_num_t)current_echo_pin) != 0) {
+        gpio_set_direction((gpio_num_t)current_echo_pin, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)current_echo_pin, 0);
+        esp_rom_delay_us(100);
+        gpio_set_direction((gpio_num_t)current_echo_pin, GPIO_MODE_INPUT);
+        esp_rom_delay_us(10);
     }
+
+    // 2. Ensure Trig line is LOW
+    gpio_set_level((gpio_num_t)current_trig_pin, 0);
     esp_rom_delay_us(4);
 
-    // 2. Transmit 12us HIGH trigger pulse
+    // 3. Always fire the 15us HIGH trigger pulse
     gpio_set_level((gpio_num_t)current_trig_pin, 1);
-    esp_rom_delay_us(12);
+    esp_rom_delay_us(15);
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
-    // 3. Wait for Echo pin to rise HIGH
+    // 4. Wait for Echo to rise HIGH (sensor begins 40kHz sonic burst)
     int64_t wait_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 0) {
         if (esp_timer_get_time() - wait_start > 30000) {
-            last_fail_reason = "Echo never went HIGH (no response)";
+            last_fail_reason = "Echo never went HIGH (no pulse / check Trig wire)";
             return -1.0f;
         }
     }
 
-    // 4. Measure width of the return pulse
+    // 5. Measure return pulse width until line drops LOW
     int64_t echo_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 1) {
         if (esp_timer_get_time() - echo_start > 35000) {
@@ -136,8 +137,8 @@ static float read_ultrasonic_distance() {
     int64_t echo_end = esp_timer_get_time();
     int64_t duration = echo_end - echo_start;
 
-    if (duration < 50 || duration > 30000) {
-        last_fail_reason = "Pulse duration out of range";
+    if (duration < 60 || duration > 30000) {
+        last_fail_reason = "Pulse duration out of bounds";
         return -1.0f;
     }
 
@@ -189,7 +190,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
             consecutive_fails = 0;
             consecutive_successes++;
 
-            // If auto-swap discovered the working pin arrangement, commit to flash
+            // If auto-swap verified working pins, save to NVS flash
             if (consecutive_successes == 3 && pins_were_swapped) {
                 pins_were_swapped = false;
                 nvs_handle_t my_handle;
@@ -209,16 +210,16 @@ static void ultrasonic_safety_task(void *pvParameter) {
                 ble_manager_send_notify(lock_msg);
             }
 
-            // Periodic diagnostic info on successful measurements
+            // Status output every 2 seconds
             if (now - last_diag_log_time > 2000000) {
                 last_diag_log_time = now;
-                ESP_LOGI(TAG, "Ping: %.1f cm (Trig=%ld, Echo=%ld)", dist, (long)current_trig_pin, (long)current_echo_pin);
+                ESP_LOGI(TAG, "Distance: %.1f cm (Trig=%ld, Echo=%ld)", dist, (long)current_trig_pin, (long)current_echo_pin);
             }
         } else {
             consecutive_successes = 0;
             consecutive_fails++;
 
-            // Periodic diagnostic reporting when failing
+            // Diagnostic reporting every 1.5 seconds on failure
             if (now - last_diag_log_time > 1500000) {
                 last_diag_log_time = now;
                 ESP_LOGW(TAG, "Ping failed on Trig=GPIO%ld, Echo=GPIO%ld: %s (fails: %d)",
@@ -230,13 +231,13 @@ static void ultrasonic_safety_task(void *pvParameter) {
                 ble_manager_send_notify(fail_msg);
             }
 
-            // Auto-swap after 25 consecutive failures (~2 seconds)
-            if (consecutive_fails >= 25) {
+            // Auto-swap after 20 consecutive fails (~2 seconds)
+            if (consecutive_fails >= 20) {
                 perform_auto_pin_swap();
             }
         }
 
-        // Automatic safety halt intervention
+        // Autonomous obstacle avoidance intervention
         if (sensor_safety_enabled) {
             if (dist > 0.0f && dist < (float)distance_threshold) {
                 consecutive_detections++;
@@ -256,7 +257,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
                     vTaskDelay(pdMS_TO_TICKS(reaction_delay));
                 }
                 if (safety_lock_engaged) {
-                    ESP_LOGW(TAG, "Obstacle detected (%.1fcm < %ldcm)! Action: %s | Audio: %s",
+                    ESP_LOGW(TAG, "Obstacle trip (%.1fcm < %ldcm)! Action: %s | Audio: %s",
                              dist, (long)distance_threshold, tripped_action, tripped_audio);
                     if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
                     if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
@@ -273,7 +274,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
             consecutive_detections = 0;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(80));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
