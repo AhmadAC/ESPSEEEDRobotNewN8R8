@@ -1,5 +1,4 @@
 
-
 #include "servo_animation.h"
 #include "servo_hw.h"
 #include "servo_storage.h"
@@ -26,17 +25,17 @@ void servo_animation_apply_staggered(void) {
     if (s_app_hl != t_hl) {
         servo_hw_write(SERVO_HIGH_LEFT_CH, 180 - t_hl, -o_hl);
         s_app_hl = t_hl;
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(18));
     }
     if (s_app_hr != t_hr) {
         servo_hw_write(SERVO_HIGH_RIGHT_CH, t_hr, o_hr);
         s_app_hr = t_hr;
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(18));
     }
     if (s_app_ll != t_ll) {
         servo_hw_write(SERVO_LOW_LEFT_CH, 180 - t_ll, -o_ll);
         s_app_ll = t_ll;
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(18));
     }
     if (s_app_lr != t_lr) {
         servo_hw_write(SERVO_LOW_RIGHT_CH, t_lr, o_lr);
@@ -46,13 +45,13 @@ void servo_animation_apply_staggered(void) {
 }
 
 static void run_wave(ledc_channel_t ch, int *state, int *pos, bool inv, int off) {
-    const int step = 20;
+    const int step = 12;
     if (*state % 2 == 0) {
         *pos += step;
-        if (*pos >= 180) { *pos = 180; (*state)++; }
+        if (*pos >= 170) { *pos = 170; (*state)++; }
     } else {
         *pos -= step;
-        if (*pos <= 0) { *pos = 0; (*state)++; }
+        if (*pos <= 10) { *pos = 10; (*state)++; }
     }
     if (*state >= 6 && *pos >= 90) {
         *pos = 90; s_active_anim = 0; servo_hw_schedule_relax();
@@ -107,37 +106,25 @@ static void servo_animation_task(void *pv) {
             const int SWING_MAG = 28;
             int dir = (s_active_anim == 1) ? 1 : -1;
 
-            // Target angles for 4 phases of diagonal trot
             int target_hl = 90, target_lr = 90;
             int target_hr = 90, target_ll = 90;
 
             if (s_anim_state == 0) {
-                // Phase 0: Pair A swings forward, Pair B pushes backward
                 target_hl = 90 + (SWING_MAG * dir);
                 target_lr = 90 + (SWING_MAG * dir);
                 target_hr = 90 - (SWING_MAG * dir);
                 target_ll = 90 - (SWING_MAG * dir);
             } else if (s_anim_state == 1) {
-                // Phase 1: Neutral plant crossing
-                target_hl = 90;
-                target_lr = 90;
-                target_hr = 90;
-                target_ll = 90;
+                target_hl = 90; target_lr = 90; target_hr = 90; target_ll = 90;
             } else if (s_anim_state == 2) {
-                // Phase 2: Pair B swings forward, Pair A pushes backward
                 target_hl = 90 - (SWING_MAG * dir);
                 target_lr = 90 - (SWING_MAG * dir);
                 target_hr = 90 + (SWING_MAG * dir);
                 target_ll = 90 + (SWING_MAG * dir);
             } else {
-                // Phase 3: Neutral plant crossing
-                target_hl = 90;
-                target_lr = 90;
-                target_hr = 90;
-                target_ll = 90;
+                target_hl = 90; target_lr = 90; target_hr = 90; target_ll = 90;
             }
 
-            // Rapid step (8 deg/step) with 8ms phase stagger to prevent brownout
             bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - target_hl, -o_hl, 8);
             bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, target_lr, o_lr, 8);
             vTaskDelay(pdMS_TO_TICKS(8));
@@ -194,13 +181,52 @@ static void servo_animation_task(void *pv) {
             run_wave(SERVO_HIGH_LEFT_CH, &s_anim_state, &s_anim_pos, true, -o_hl);
         } else if (s_active_anim == 6) {
             run_wave(SERVO_HIGH_RIGHT_CH, &s_anim_state, &s_anim_pos, false, o_hr);
-        } else if (s_active_anim == 7) {
+        } 
+        // -----------------------------------------------------------------
+        // BROWNOUT-FREE 4-LEG CRAWL GAIT (ANIM 7)
+        // Low-profile, crouched crawling gait with gentle 4 deg ramp steps
+        // -----------------------------------------------------------------
+        else if (s_active_anim == 7) {
             servo_hw_cancel_relax();
-            s_anim_pos += (s_anim_state == 0) ? 6 : -6;
-            if (s_anim_pos >= 135) s_anim_state = 1;
-            if (s_anim_pos <= 45)  s_anim_state = 0;
-            servo_hw_write(SERVO_HIGH_LEFT_CH, 180 - s_anim_pos, -o_hl); vTaskDelay(pdMS_TO_TICKS(15));
-            servo_hw_write(SERVO_HIGH_RIGHT_CH, s_anim_pos, o_hr); vTaskDelay(pdMS_TO_TICKS(15));
+            const int CROUCH_BASE = 65;
+            const int CRAWL_SWING = 20;
+
+            int target_hl = CROUCH_BASE, target_lr = CROUCH_BASE;
+            int target_hr = CROUCH_BASE, target_ll = CROUCH_BASE;
+
+            if (s_anim_state == 0) {
+                // Diagonal Pair A steps forward, Pair B pushes backward
+                target_hl = CROUCH_BASE + CRAWL_SWING;
+                target_lr = CROUCH_BASE + CRAWL_SWING;
+                target_hr = CROUCH_BASE - CRAWL_SWING;
+                target_ll = CROUCH_BASE - CRAWL_SWING;
+            } else if (s_anim_state == 1) {
+                // Return to neutral crouch
+                target_hl = CROUCH_BASE; target_lr = CROUCH_BASE;
+                target_hr = CROUCH_BASE; target_ll = CROUCH_BASE;
+            } else if (s_anim_state == 2) {
+                // Diagonal Pair B steps forward, Pair A pushes backward
+                target_hl = CROUCH_BASE - CRAWL_SWING;
+                target_lr = CROUCH_BASE - CRAWL_SWING;
+                target_hr = CROUCH_BASE + CRAWL_SWING;
+                target_ll = CROUCH_BASE + CRAWL_SWING;
+            } else {
+                target_hl = CROUCH_BASE; target_lr = CROUCH_BASE;
+                target_hr = CROUCH_BASE; target_ll = CROUCH_BASE;
+            }
+
+            // Step with gentle 4 deg/step and 8ms phase stagger to prevent rail dip
+            bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - target_hl, -o_hl, 4);
+            bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, target_lr, o_lr, 4);
+            vTaskDelay(pdMS_TO_TICKS(8));
+
+            bool d_hr = servo_hw_step_towards(SERVO_HIGH_RIGHT_CH, target_hr, o_hr, 4);
+            bool d_ll = servo_hw_step_towards(SERVO_LOW_LEFT_CH, 180 - target_ll, -o_ll, 4);
+            vTaskDelay(pdMS_TO_TICKS(8));
+
+            if (d_hl && d_lr && d_hr && d_ll) {
+                s_anim_state = (s_anim_state + 1) % 4;
+            }
         } else if (s_active_anim == 8) {
             // STAND (Index 1) - Gentle 3 deg/step to eliminate battery brownout
             anim_step_concurrent(1, 3);
@@ -208,24 +234,75 @@ static void servo_animation_task(void *pv) {
             run_wave(SERVO_LOW_LEFT_CH, &s_anim_state, &s_anim_pos, true, -o_ll);
         } else if (s_active_anim == 10) {
             run_wave(SERVO_LOW_RIGHT_CH, &s_anim_state, &s_anim_pos, false, o_lr);
-        } else if (s_active_anim == 11) {
+        } 
+        // -----------------------------------------------------------------
+        // BROWNOUT-FREE FORWARD LEAP / POUNCE (ANIM 11)
+        // 4-Phase physics: Pre-load crouch -> Spring thrust -> Cushion -> Stand
+        // -----------------------------------------------------------------
+        else if (s_active_anim == 11) {
             servo_hw_cancel_relax();
+
             if (s_anim_state == 0) {
-                servo_hw_write(SERVO_HIGH_LEFT_CH, 0, -o_hl); s_anim_state = 1;
+                // Phase 0: Crouch down smoothly to store energy
+                bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - 60, -o_hl, 5);
+                bool d_hr = servo_hw_step_towards(SERVO_HIGH_RIGHT_CH, 60, o_hr, 5);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                bool d_ll = servo_hw_step_towards(SERVO_LOW_LEFT_CH, 180 - 60, -o_ll, 5);
+                bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, 60, o_lr, 5);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                if (d_hl && d_hr && d_ll && d_lr) {
+                    s_wait_counter = 0;
+                    s_anim_state = 1;
+                }
             } else if (s_anim_state == 1) {
-                servo_hw_write(SERVO_HIGH_RIGHT_CH, 180, o_hr); s_wait_counter = 0; s_anim_state = 2;
-            } else if (s_anim_state == 2 && ++s_wait_counter >= 8) {
-                servo_hw_write(SERVO_LOW_LEFT_CH, 0, -o_ll); s_anim_state = 3;
+                // Phase 1: Brief pause in crouch
+                if (++s_wait_counter >= 5) {
+                    s_anim_state = 2;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
+            } else if (s_anim_state == 2) {
+                // Phase 2: Forward launch thrust (Front reaches 120, Rear pushes back to 125)
+                bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - 120, -o_hl, 8);
+                bool d_hr = servo_hw_step_towards(SERVO_HIGH_RIGHT_CH, 120, o_hr, 8);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                bool d_ll = servo_hw_step_towards(SERVO_LOW_LEFT_CH, 180 - 125, -o_ll, 8);
+                bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, 125, o_lr, 8);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                if (d_hl && d_hr && d_ll && d_lr) {
+                    s_anim_state = 3;
+                }
             } else if (s_anim_state == 3) {
-                servo_hw_write(SERVO_LOW_RIGHT_CH, 180, o_lr); s_wait_counter = 0; s_anim_state = 4;
-            } else if (s_anim_state == 4 && ++s_wait_counter >= 15) {
-                servo_hw_write(SERVO_LOW_LEFT_CH, 180, -o_ll); s_anim_state = 5;
-            } else if (s_anim_state == 5) {
-                servo_hw_write(SERVO_LOW_RIGHT_CH, 0, o_lr); s_wait_counter = 0; s_anim_state = 6;
-            } else if (s_anim_state == 6 && ++s_wait_counter >= 20) {
-                s_anim_state = 0;
+                // Phase 3: Land and cushion impact
+                bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - 85, -o_hl, 6);
+                bool d_hr = servo_hw_step_towards(SERVO_HIGH_RIGHT_CH, 85, o_hr, 6);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                bool d_ll = servo_hw_step_towards(SERVO_LOW_LEFT_CH, 180 - 95, -o_ll, 6);
+                bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, 95, o_lr, 6);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                if (d_hl && d_hr && d_ll && d_lr) {
+                    s_anim_state = 4;
+                }
+            } else if (s_anim_state == 4) {
+                // Phase 4: Recover to 90 deg Stand pose smoothly
+                bool d_hl = servo_hw_step_towards(SERVO_HIGH_LEFT_CH, 180 - 90, -o_hl, 4);
+                bool d_hr = servo_hw_step_towards(SERVO_HIGH_RIGHT_CH, 90, o_hr, 4);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                bool d_ll = servo_hw_step_towards(SERVO_LOW_LEFT_CH, 180 - 90, -o_ll, 4);
+                bool d_lr = servo_hw_step_towards(SERVO_LOW_RIGHT_CH, 90, o_lr, 4);
+                vTaskDelay(pdMS_TO_TICKS(8));
+
+                if (d_hl && d_hr && d_ll && d_lr) {
+                    s_active_anim = 0;
+                    servo_hw_schedule_relax();
+                }
             }
-            vTaskDelay(pdMS_TO_TICKS(20));
         } else if (s_active_anim == 12) {
             // SIT (Index 0) - Gentle 3 deg/step to eliminate battery brownout
             anim_step_concurrent(0, 3);

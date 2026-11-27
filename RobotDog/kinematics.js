@@ -1,3 +1,4 @@
+
 let legAngles = { hl: 90, hr: 90, ll: 90, lr: 90 };
 let legOffsets = { hl: 0, hr: 0, ll: 0, lr: 11 };
 
@@ -91,9 +92,9 @@ function getSyncedLegs(primaryLeg) {
 
 function onLegSlider(leg, val) {
   const parsedVal = parseInt(val, 10);
-  const targetLegs = getSyncedLegs(leg);
 
   if (isOffsetMode) {
+    const targetLegs = getSyncedLegs(leg);
     targetLegs.forEach(k => {
       legOffsets[k] = parsedVal;
       const offEl = document.getElementById(`o${k}-val`);
@@ -106,15 +107,44 @@ function onLegSlider(leg, val) {
     });
     try { localStorage.setItem("esp32_leg_offsets", JSON.stringify(legOffsets)); } catch (e) {}
   } else {
-    targetLegs.forEach(k => {
-      legAngles[k] = parsedVal;
-      const valEl = document.getElementById(`${k}-val`);
+    if (syncAllActive) {
+      // Staggered unified all-legs update prevents inrush brownout
+      ["hl", "hr", "ll", "lr"].forEach(k => {
+        legAngles[k] = parsedVal;
+        const valEl = document.getElementById(`${k}-val`);
+        if (valEl) valEl.innerText = `${parsedVal} deg`;
+        const sl = document.getElementById(`${k}-slider`);
+        if (sl && sl.value != parsedVal) sl.value = parsedVal;
+      });
+      pendingLeg = { all: `all ${parsedVal}` };
+      try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+    } else if (syncFrontActive && (leg === "hl" || leg === "hr")) {
+      ["hl", "hr"].forEach(k => {
+        legAngles[k] = parsedVal;
+        const valEl = document.getElementById(`${k}-val`);
+        if (valEl) valEl.innerText = `${parsedVal} deg`;
+        const sl = document.getElementById(`${k}-slider`);
+        if (sl && sl.value != parsedVal) sl.value = parsedVal;
+      });
+      pendingLeg = { hl: `hl ${parsedVal}` };
+      try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+    } else if (syncBackActive && (leg === "ll" || leg === "lr")) {
+      ["ll", "lr"].forEach(k => {
+        legAngles[k] = parsedVal;
+        const valEl = document.getElementById(`${k}-val`);
+        if (valEl) valEl.innerText = `${parsedVal} deg`;
+        const sl = document.getElementById(`${k}-slider`);
+        if (sl && sl.value != parsedVal) sl.value = parsedVal;
+      });
+      pendingLeg = { ll: `ll ${parsedVal}` };
+      try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+    } else {
+      legAngles[leg] = parsedVal;
+      const valEl = document.getElementById(`${leg}-val`);
       if (valEl) valEl.innerText = `${parsedVal} deg`;
-      const sl = document.getElementById(`${k}-slider`);
-      if (sl && sl.value != parsedVal) sl.value = parsedVal;
-      pendingLeg[k] = `${k} ${parsedVal}`;
-    });
-    try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+      pendingLeg[leg] = `${leg} ${parsedVal}`;
+      try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+    }
   }
 
   if (!legThrottleTimer) {
@@ -125,14 +155,27 @@ function onLegSlider(leg, val) {
       for (let i = 0; i < cmds.length; i++) {
         await sendCommand(cmds[i]);
         if (i < cmds.length - 1) {
-          await new Promise(r => setTimeout(r, 20));
+          await new Promise(r => setTimeout(r, 35));
         }
       }
-    }, 40);
+    }, 45);
   }
 }
 
 async function nudgeLegAngle(leg, delta) {
+  if (syncAllActive) {
+    let next = (legAngles["hl"] || 90) + delta;
+    if (next < 0) next = 0; if (next > 180) next = 180;
+    ["hl", "hr", "ll", "lr"].forEach(k => {
+      legAngles[k] = next;
+      const sl = document.getElementById(`${k}-slider`); if (sl) sl.value = next;
+      const valEl = document.getElementById(`${k}-val`); if (valEl) valEl.innerText = `${next} deg`;
+    });
+    try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
+    await sendCommand(`all ${next}`);
+    return;
+  }
+
   const targetLegs = getSyncedLegs(leg);
   for (let i = 0; i < targetLegs.length; i++) {
     const k = targetLegs[i];
@@ -145,7 +188,7 @@ async function nudgeLegAngle(leg, delta) {
     }
     await sendCommand(`${k} ${next}`);
     if (i < targetLegs.length - 1) {
-      await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 35));
     }
   }
   try { localStorage.setItem("esp32_leg_angles", JSON.stringify(legAngles)); } catch (e) {}
@@ -166,7 +209,7 @@ async function adjustOffset(leg, delta) {
     await sendCommand(`offset ${k} ${legOffsets[k]}`);
     appendLog("Trim", `${k.toUpperCase()} Offset -> ${legOffsets[k]}`);
     if (i < targetLegs.length - 1) {
-      await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 35));
     }
   }
   try { localStorage.setItem("esp32_leg_offsets", JSON.stringify(legOffsets)); } catch (e) {}
@@ -260,7 +303,7 @@ function updateSyncUI() {
   if (syncBackActive) btnB.classList.add("active"); else btnB.classList.remove("active");
   if (syncAllActive) btnA.classList.add("active"); else btnA.classList.remove("active");
 
-  if (syncAllActive) { ind.innerText = "All 4 Synced"; ind.style.color = "#38bdf8"; }
+  if (syncAllActive) { ind.innerText = "All 4 Synced (Staggered)"; ind.style.color = "#38bdf8"; }
   else if (syncFrontActive && syncBackActive) { ind.innerText = "Front & Back Synced"; ind.style.color = "#38bdf8"; }
   else if (syncFrontActive) { ind.innerText = "Front Synced"; ind.style.color = "#a855f7"; }
   else if (syncBackActive) { ind.innerText = "Back Synced"; ind.style.color = "#a855f7"; }
@@ -385,13 +428,13 @@ async function saveAllHardwareConfig() {
 
   updateAllLegUI();
 
-  // Transmit hardware reconfiguration to ESP32 over BLE with 20ms safety spacing
+  // Transmit hardware reconfiguration to ESP32 over BLE with safety spacing
   await sendCommand(`setnames ${legNames.hl.replace(/\s+/g, "_")} ${legNames.hr.replace(/\s+/g, "_")} ${legNames.ll.replace(/\s+/g, "_")} ${legNames.lr.replace(/\s+/g, "_")}`);
-  await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 25));
   await sendCommand(`setpins leg ${hardwarePins.srv_ll} ${hardwarePins.srv_hr} ${hardwarePins.srv_hl} ${hardwarePins.srv_lr}`);
-  await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 25));
   await sendCommand(`setpins sens ${hardwarePins.sens_trig} ${hardwarePins.sens_echo}`);
-  await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 25));
   await sendCommand(`setpins aud ${hardwarePins.aud_bclk} ${hardwarePins.aud_lrc} ${hardwarePins.aud_din}`);
 
   showToast("Hardware Pins & Names Saved!", "success");
@@ -418,9 +461,9 @@ async function resetHardwareDefaults() {
   populateHardwareModalInputs();
   updateAllLegUI();
   await sendCommand("setpins leg 1 2 3 4");
-  await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 25));
   await sendCommand("setpins sens 5 6");
-  await new Promise(r => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 25));
   await sendCommand("setpins aud 10 11 12");
   showToast("Restored GPIO Pin Defaults", "info");
 }

@@ -1,4 +1,3 @@
-
 // main/ble_manager.cpp
 #include "ble_manager.h"
 #include "esp_log.h"
@@ -178,8 +177,18 @@ static void execute_ble_command(const char* p) {
         ble_manager_send_notify(">> Walk Backward\n");
         return;
     }
+    if (strcmp(p, "crawl") == 0) {
+        servo_set_action("crawl");
+        ble_manager_send_notify(">> Crawl\n");
+        return;
+    }
+    if (strcmp(p, "leap_forward") == 0 || strcmp(p, "leap") == 0) {
+        servo_set_action("leap_forward");
+        ble_manager_send_notify(">> Leap Forward\n");
+        return;
+    }
     if (strcmp(p, "help") == 0 || strcmp(p, "info") == 0) {
-        ble_manager_send_notify(">> Commands: stand, sit, walk, backward, crawl, stop, bark, beep, status\n");
+        ble_manager_send_notify(">> Commands: stand, sit, walk, backward, crawl, leap_forward, stop, bark, beep, status\n");
         return;
     }
 
@@ -263,28 +272,57 @@ static void execute_ble_command(const char* p) {
     if (strcmp(p, "sync_all off") == 0) { ble_sync_all = ble_sync_front = ble_sync_back = false; ble_manager_send_notify(">> All Sync OFF\n"); return; }
 
     int leg_ang = 0;
+    // Staggered joint updates to guarantee zero brownout on all-legs-sync
+    if (sscanf(p, "all %d", &leg_ang) == 1) {
+        servo_set_target("all", leg_ang);
+        return;
+    }
     if (sscanf(p, "hl %d", &leg_ang) == 1) {
-        servo_set_target("high_left", leg_ang);
-        if (ble_sync_front || ble_sync_all) servo_set_target("high_right", leg_ang);
-        if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
+        if (ble_sync_all) {
+            servo_set_target("all", leg_ang);
+        } else if (ble_sync_front) {
+            servo_set_target("high_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            servo_set_target("high_right", leg_ang);
+        } else {
+            servo_set_target("high_left", leg_ang);
+        }
         return;
     }
     if (sscanf(p, "hr %d", &leg_ang) == 1) {
-        servo_set_target("high_right", leg_ang);
-        if (ble_sync_front || ble_sync_all) servo_set_target("high_left", leg_ang);
-        if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
+        if (ble_sync_all) {
+            servo_set_target("all", leg_ang);
+        } else if (ble_sync_front) {
+            servo_set_target("high_right", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            servo_set_target("high_left", leg_ang);
+        } else {
+            servo_set_target("high_right", leg_ang);
+        }
         return;
     }
     if (sscanf(p, "ll %d", &leg_ang) == 1) {
-        servo_set_target("low_left", leg_ang);
-        if (ble_sync_back || ble_sync_all) servo_set_target("low_right", leg_ang);
-        if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
+        if (ble_sync_all) {
+            servo_set_target("all", leg_ang);
+        } else if (ble_sync_back) {
+            servo_set_target("low_left", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            servo_set_target("low_right", leg_ang);
+        } else {
+            servo_set_target("low_left", leg_ang);
+        }
         return;
     }
     if (sscanf(p, "lr %d", &leg_ang) == 1) {
-        servo_set_target("low_right", leg_ang);
-        if (ble_sync_back || ble_sync_all) servo_set_target("low_left", leg_ang);
-        if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
+        if (ble_sync_all) {
+            servo_set_target("all", leg_ang);
+        } else if (ble_sync_back) {
+            servo_set_target("low_right", leg_ang);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            servo_set_target("low_left", leg_ang);
+        } else {
+            servo_set_target("low_right", leg_ang);
+        }
         return;
     }
 

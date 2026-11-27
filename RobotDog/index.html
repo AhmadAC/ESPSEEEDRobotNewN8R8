@@ -1,3 +1,4 @@
+#################### START OF FILE: RobotDog\index.html ####################
 
 <!DOCTYPE html>
 <html lang="en" class="h-full bg-slate-950 text-slate-100 select-none">
@@ -52,62 +53,90 @@
 
   <main style="flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding-right:2px;" class="no-scrollbar">
 
-    <!-- Direct Motion Controls -->
+    <!-- Direct Motion Controls with Renamable Buttons -->
     <div class="glass-panel" style="border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:10px;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
         <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; display:flex; align-items:center; gap:6px;">
           <svg style="width:15px; height:15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>
           </svg>
           Direct Touch Motion Controls
         </span>
-        <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="padding:5px 10px; border-radius:8px; background:#ef4444; color:white; font-size:10px; font-weight:700; border:none; flex-direction:row; gap:4px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
-          <span>EMERGENCY STOP</span>
-        </button>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-edit-action-labels" type="button" onclick="openButtonRenameModal()" style="background:#1e293b; border:1px solid rgba(56,189,248,0.4); border-radius:8px; padding:5px 8px; color:#38bdf8; font-size:10px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Edit Buttons</span>
+          </button>
+          <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="padding:5px 10px; border-radius:8px; background:#ef4444; color:white; font-size:10px; font-weight:700; border:none; flex-direction:row; gap:4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            <span>STOP</span>
+          </button>
+        </div>
       </div>
 
+      <!-- Directional Grid -->
       <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; max-width:280px; margin:0 auto; width:100%;">
         <div></div>
-        <button type="button" class="touch-btn" onclick="sendCommand('forward')" style="height:48px;">
+        <button id="btn-touch-forward" type="button" class="touch-btn" onclick="onMotionBtnClick('forward')" style="height:48px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-          <span style="font-size:9px; margin-top:2px;">FORWARD</span>
+          <span id="lbl-btn-forward" style="font-size:9px; margin-top:2px;">FORWARD</span>
         </button>
         <div></div>
 
-        <button type="button" class="touch-btn" onclick="sendCommand('left_wave')" style="height:48px;">
+        <button id="btn-touch-left" type="button" class="touch-btn" onclick="onMotionBtnClick('left')" style="height:48px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          <span style="font-size:9px; margin-top:2px;">LEFT</span>
+          <span id="lbl-btn-left" style="font-size:9px; margin-top:2px;">LEFT</span>
         </button>
-        <button type="button" class="touch-btn" onclick="sendCommand('stop')" style="height:48px; background:#475569;">
+        <button id="btn-touch-stop" type="button" class="touch-btn" onclick="onMotionBtnClick('stop')" style="height:48px; background:#475569;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
-          <span style="font-size:9px; margin-top:2px;">STOP</span>
+          <span id="lbl-btn-stop" style="font-size:9px; margin-top:2px;">STOP</span>
         </button>
-        <button type="button" class="touch-btn" onclick="sendCommand('right_wave')" style="height:48px;">
+        <button id="btn-touch-right" type="button" class="touch-btn" onclick="onMotionBtnClick('right')" style="height:48px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          <span style="font-size:9px; margin-top:2px;">RIGHT</span>
+          <span id="lbl-btn-right" style="font-size:9px; margin-top:2px;">RIGHT</span>
         </button>
 
         <div></div>
-        <button type="button" class="touch-btn" onclick="sendCommand('backward')" style="height:48px;">
+        <button id="btn-touch-backward" type="button" class="touch-btn" onclick="onMotionBtnClick('backward')" style="height:48px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          <span style="font-size:9px; margin-top:2px;">BACKWARD</span>
+          <span id="lbl-btn-backward" style="font-size:9px; margin-top:2px;">BACKWARD</span>
         </button>
         <div></div>
       </div>
 
+      <!-- Action Row 1 -->
       <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin-top:2px;">
-        <button type="button" class="touch-btn" onclick="sendCommand('stand')" style="padding:8px 4px; font-size:11px;">Stand</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('sit')" style="padding:8px 4px; font-size:11px;">Sit</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('crawl')" style="padding:8px 4px; font-size:11px;">Crawl</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('leap_forward')" style="padding:8px 4px; font-size:11px;">Leap</button>
+        <button id="btn-touch-stand" type="button" class="touch-btn" onclick="onMotionBtnClick('stand')" style="padding:8px 4px; font-size:11px;">
+          <span id="lbl-btn-stand">Stand</span>
+        </button>
+        <button id="btn-touch-sit" type="button" class="touch-btn" onclick="onMotionBtnClick('sit')" style="padding:8px 4px; font-size:11px;">
+          <span id="lbl-btn-sit">Sit</span>
+        </button>
+        <button id="btn-touch-crawl" type="button" class="touch-btn" onclick="onMotionBtnClick('crawl')" style="padding:8px 4px; font-size:11px;">
+          <span id="lbl-btn-crawl">Crawl</span>
+        </button>
+        <button id="btn-touch-leap" type="button" class="touch-btn" onclick="onMotionBtnClick('leap')" style="padding:8px 4px; font-size:11px;">
+          <span id="lbl-btn-leap">Leap</span>
+        </button>
       </div>
 
+      <!-- Action Row 2 (Renamable Step Fwd, Step Bwd, Stretches) -->
       <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
-        <button type="button" class="touch-btn" onclick="sendCommand('stretch_down')" style="padding:8px 4px; font-size:10px;">Stretch Dn</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('stretch_back')" style="padding:8px 4px; font-size:10px;">Stretch Bk</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('step_forward')" style="padding:8px 4px; font-size:10px;">Step Fwd</button>
-        <button type="button" class="touch-btn" onclick="sendCommand('step_backward')" style="padding:8px 4px; font-size:10px;">Step Bwd</button>
+        <button id="btn-touch-stretch_down" type="button" class="touch-btn" onclick="onMotionBtnClick('stretch_down')" style="padding:8px 4px; font-size:10px;">
+          <span id="lbl-btn-stretch_down">Stretch Dn</span>
+        </button>
+        <button id="btn-touch-stretch_back" type="button" class="touch-btn" onclick="onMotionBtnClick('stretch_back')" style="padding:8px 4px; font-size:10px;">
+          <span id="lbl-btn-stretch_back">Stretch Bk</span>
+        </button>
+        <button id="btn-touch-step_forward" type="button" class="touch-btn" onclick="onMotionBtnClick('step_forward')" style="padding:8px 4px; font-size:10px;">
+          <span id="lbl-btn-step_forward">Step Fwd</span>
+        </button>
+        <button id="btn-touch-step_backward" type="button" class="touch-btn" onclick="onMotionBtnClick('step_backward')" style="padding:8px 4px; font-size:10px;">
+          <span id="lbl-btn-step_backward">Step Bwd</span>
+        </button>
       </div>
     </div>
 
@@ -322,6 +351,130 @@
 
   </main>
 
+  <!-- CUSTOMIZE & RENAME BUTTONS MODAL -->
+  <div id="btn-rename-modal" class="modal-backdrop">
+    <div class="modal-dialog no-scrollbar" style="max-width:440px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:10px;">
+        <span style="font-size:13px; font-weight:700; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+          Rename &amp; Customize Motion Buttons
+        </span>
+        <button type="button" onclick="closeButtonRenameModal()" style="background:none; border:none; color:rgba(255,255,255,0.6); cursor:pointer; font-size:16px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div style="margin-top:8px;">
+        <p style="font-size:10px; color:rgba(255,255,255,0.6); margin-bottom:10px;">Customize button titles and their dispatched commands. Saved in browser storage.</p>
+        
+        <!-- Step Buttons -->
+        <span class="modal-sec-title">Step Buttons</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+          <div>
+            <label class="modal-label">Button 1 Label:</label>
+            <input type="text" id="edit-lbl-step_forward" class="modal-input" placeholder="Step Fwd">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-step_forward" class="modal-input" placeholder="step_forward">
+          </div>
+          <div>
+            <label class="modal-label">Button 2 Label:</label>
+            <input type="text" id="edit-lbl-step_backward" class="modal-input" placeholder="Step Bwd">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-step_backward" class="modal-input" placeholder="step_backward">
+          </div>
+        </div>
+
+        <!-- Stretches -->
+        <span class="modal-sec-title">Stretch Buttons</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+          <div>
+            <label class="modal-label">Stretch Down Label:</label>
+            <input type="text" id="edit-lbl-stretch_down" class="modal-input" placeholder="Stretch Dn">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-stretch_down" class="modal-input" placeholder="stretch_down">
+          </div>
+          <div>
+            <label class="modal-label">Stretch Back Label:</label>
+            <input type="text" id="edit-lbl-stretch_back" class="modal-input" placeholder="Stretch Bk">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-stretch_back" class="modal-input" placeholder="stretch_back">
+          </div>
+        </div>
+
+        <!-- Stand, Sit, Crawl, Leap -->
+        <span class="modal-sec-title">Core Poses</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+          <div>
+            <label class="modal-label">Stand Label:</label>
+            <input type="text" id="edit-lbl-stand" class="modal-input" placeholder="Stand">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-stand" class="modal-input" placeholder="stand">
+          </div>
+          <div>
+            <label class="modal-label">Sit Label:</label>
+            <input type="text" id="edit-lbl-sit" class="modal-input" placeholder="Sit">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-sit" class="modal-input" placeholder="sit">
+          </div>
+          <div>
+            <label class="modal-label">Crawl Label:</label>
+            <input type="text" id="edit-lbl-crawl" class="modal-input" placeholder="Crawl">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-crawl" class="modal-input" placeholder="crawl">
+          </div>
+          <div>
+            <label class="modal-label">Leap Label:</label>
+            <input type="text" id="edit-lbl-leap" class="modal-input" placeholder="Leap">
+            <label class="modal-label" style="margin-top:4px;">Command:</label>
+            <input type="text" id="edit-cmd-leap" class="modal-input" placeholder="leap_forward">
+          </div>
+        </div>
+
+        <!-- Directional Labels -->
+        <span class="modal-sec-title">Directional Labels</span>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;">
+          <div>
+            <label class="modal-label">Forward:</label>
+            <input type="text" id="edit-lbl-forward" class="modal-input" placeholder="FORWARD">
+          </div>
+          <div>
+            <label class="modal-label">Backward:</label>
+            <input type="text" id="edit-lbl-backward" class="modal-input" placeholder="BACKWARD">
+          </div>
+          <div>
+            <label class="modal-label">Stop:</label>
+            <input type="text" id="edit-lbl-stop" class="modal-input" placeholder="STOP">
+          </div>
+          <div>
+            <label class="modal-label">Left:</label>
+            <input type="text" id="edit-lbl-left" class="modal-input" placeholder="LEFT">
+          </div>
+          <div>
+            <label class="modal-label">Right:</label>
+            <input type="text" id="edit-lbl-right" class="modal-input" placeholder="RIGHT">
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; gap:8px; margin-top:14px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+        <button type="button" onclick="restoreButtonDefaults()" class="trim-btn" style="padding:8px 12px; font-size:10px; background:#334155;">
+          Restore Defaults
+        </button>
+        <div style="display:flex; gap:6px;">
+          <button type="button" onclick="closeButtonRenameModal()" class="trim-btn" style="padding:8px 12px; font-size:10px; background:#475569;">
+            Cancel
+          </button>
+          <button type="button" onclick="saveCustomButtonConfig()" class="trim-btn" style="padding:8px 14px; font-size:10px; background:#10b981; color:#000; font-weight:700;">
+            Save Labels
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- HARDWARE & LEG PIN REPROGRAMMING MODAL -->
   <div id="hw-config-modal" class="modal-backdrop">
     <div class="modal-dialog no-scrollbar">
@@ -438,13 +591,123 @@
 
   <footer style="margin-top:8px;">
     <form onsubmit="handleSendCustom(event)" style="display:flex; gap:8px;">
-      <input type="text" id="cmd-input" placeholder="Type command (e.g. status, sit, stand, d)..." style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px 12px; font-size:12px; color:white; outline:none;">
+      <input type="text" id="cmd-input" placeholder="Type command (e.g. status, sit, stand, walk)..." style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px 12px; font-size:12px; color:white; outline:none;">
       <button type="submit" class="touch-btn" style="padding:0 16px; border-radius:12px; background:#0284c7; color:white; font-size:12px; font-weight:600; border:none; cursor:pointer; flex-direction:row; gap:6px;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
         <span>Send</span>
       </button>
     </form>
   </footer>
+
+  <!-- BUTTON RENAMING & ACTION LOGIC -->
+  <script>
+    const DEFAULT_ACTION_BUTTONS = {
+      forward:         { label: "FORWARD",    cmd: "forward" },
+      backward:        { label: "BACKWARD",   cmd: "backward" },
+      left:            { label: "LEFT",       cmd: "left_wave" },
+      right:           { label: "RIGHT",      cmd: "right_wave" },
+      stop:            { label: "STOP",       cmd: "stop" },
+      stand:           { label: "Stand",      cmd: "stand" },
+      sit:             { label: "Sit",        cmd: "sit" },
+      crawl:           { label: "Crawl",      cmd: "crawl" },
+      leap:            { label: "Leap",       cmd: "leap_forward" },
+      stretch_down:    { label: "Stretch Dn", cmd: "stretch_down" },
+      stretch_back:    { label: "Stretch Bk", cmd: "stretch_back" },
+      step_forward:    { label: "Step Fwd",   cmd: "step_forward" },
+      step_backward:   { label: "Step Bwd",   cmd: "step_backward" }
+    };
+
+    let actionButtons = Object.assign({}, DEFAULT_ACTION_BUTTONS);
+
+    function initActionButtons() {
+      try {
+        const stored = localStorage.getItem("esp32_custom_motion_btns");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          actionButtons = Object.assign({}, DEFAULT_ACTION_BUTTONS, parsed);
+        }
+      } catch (e) {}
+      applyAllActionLabels();
+    }
+
+    function applyAllActionLabels() {
+      Object.keys(actionButtons).forEach(key => {
+        const lblEl = document.getElementById("lbl-btn-" + key);
+        if (lblEl && actionButtons[key]) {
+          lblEl.innerText = actionButtons[key].label || DEFAULT_ACTION_BUTTONS[key].label;
+        }
+      });
+    }
+
+    function onMotionBtnClick(key) {
+      const cfg = actionButtons[key] || DEFAULT_ACTION_BUTTONS[key];
+      if (!cfg || !cfg.cmd) return;
+      if (typeof sendCommand === "function") {
+        sendCommand(cfg.cmd);
+      }
+    }
+
+    function openButtonRenameModal() {
+      populateButtonRenameInputs();
+      const m = document.getElementById("btn-rename-modal");
+      if (m) m.style.display = "flex";
+    }
+
+    function closeButtonRenameModal() {
+      const m = document.getElementById("btn-rename-modal");
+      if (m) m.style.display = "none";
+    }
+
+    function populateButtonRenameInputs() {
+      Object.keys(actionButtons).forEach(key => {
+        const lblInput = document.getElementById("edit-lbl-" + key);
+        const cmdInput = document.getElementById("edit-cmd-" + key);
+        if (lblInput && actionButtons[key]) {
+          lblInput.value = actionButtons[key].label;
+        }
+        if (cmdInput && actionButtons[key]) {
+          cmdInput.value = actionButtons[key].cmd;
+        }
+      });
+    }
+
+    function saveCustomButtonConfig() {
+      Object.keys(actionButtons).forEach(key => {
+        const lblInput = document.getElementById("edit-lbl-" + key);
+        const cmdInput = document.getElementById("edit-cmd-" + key);
+        if (lblInput && lblInput.value.trim()) {
+          actionButtons[key].label = lblInput.value.trim();
+        }
+        if (cmdInput && cmdInput.value.trim()) {
+          actionButtons[key].cmd = cmdInput.value.trim();
+        }
+      });
+
+      try {
+        localStorage.setItem("esp32_custom_motion_btns", JSON.stringify(actionButtons));
+      } catch (e) {}
+
+      applyAllActionLabels();
+      if (typeof showToast === "function") {
+        showToast("Button names & actions updated!", "success");
+      }
+      closeButtonRenameModal();
+    }
+
+    function restoreButtonDefaults() {
+      actionButtons = Object.assign({}, DEFAULT_ACTION_BUTTONS);
+      try {
+        localStorage.setItem("esp32_custom_motion_btns", JSON.stringify(actionButtons));
+      } catch (e) {}
+      populateButtonRenameInputs();
+      applyAllActionLabels();
+      if (typeof showToast === "function") {
+        showToast("Restored button defaults", "info");
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", initActionButtons);
+  </script>
 
   <script src="ble.js"></script>
   <script src="telemetry.js"></script>
