@@ -1,6 +1,7 @@
 #include "sensor_monitor.h"
 #include "servo_controller.h"
 #include "audio_player.h"
+#include "ble_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -9,13 +10,15 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include <string.h>
+#include <stdio.h>
 
 static const char *TAG = "SENSOR";
 
 static int32_t current_trig_pin = 5;
 static int32_t current_echo_pin = 6;
 
-static bool sensor_safety_enabled = false;
+// Enabled by default as requested
+static bool sensor_safety_enabled = true;
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20;
 static int32_t reaction_delay = 0;
@@ -23,10 +26,17 @@ static float current_distance = -1.0f;
 
 static TaskHandle_t sensor_task_handle = NULL;
 
-static char tripped_action[16] = "none";
-static char cleared_action[16] = "none";
-static char tripped_audio[16] = "none";
+static char tripped_action[16] = "sit";
+static char cleared_action[16] = "stand";
+static char tripped_audio[16] = "beep";
 static char cleared_audio[16] = "none";
+
+// Diagnostic and auto-swap state tracking
+static const char *last_fail_reason = "Initializing";
+static int consecutive_fails = 0;
+static int consecutive_successes = 0;
+static bool pins_were_swapped = false;
+static int64_t last_diag_log_time = 0;
 
 static void load_sensor_nvs() {
     nvs_handle_t my_handle;
@@ -35,6 +45,13 @@ static void load_sensor_nvs() {
         nvs_get_i32(my_handle, "sens_echo", &current_echo_pin);
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
         nvs_get_i32(my_handle, "sens_react", &reaction_delay);
+
+        uint8_t en = 1;
+        if (nvs_get_u8(my_handle, "sens_en", &en) == ESP_OK) {
+            sensor_safety_enabled = (en != 0);
+        } else {
+            sensor_safety_enabled = true;
+        }
 
         size_t len = sizeof(tripped_action);
         nvs_get_str(my_handle, "act_trip", tripped_action, &len);
@@ -53,9 +70,9 @@ static void load_sensor_nvs() {
 
     if (current_trig_pin <= 0) current_trig_pin = 5;
     if (current_echo_pin <= 0) current_echo_pin = 6;
-    if (strlen(tripped_action) == 0) strcpy(tripped_action, "none");
-    if (strlen(cleared_action) == 0) strcpy(cleared_action, "none");
-    if (strlen(tripped_audio) == 0) strcpy(tripped_audio, "none");
+    if (strlen(tripped_action) == 0) strcpy(tripped_action, "sit");
+    if (strlen(cleared_action) == 0) strcpy(cleared_action, "stand");
+    if (strlen(tripped_audio) == 0) strcpy(tripped_audio, "beep");
     if (strlen(cleared_audio) == 0) strcpy(cleared_audio, "none");
 }
 
@@ -83,45 +100,74 @@ static void configure_sensor_gpios() {
 
 static float read_ultrasonic_distance() {
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
-    esp_rom_delay_us(5);
 
+    // 1. Wait for Echo to be LOW before firing (drain any lingering pulse)
     int64_t settle_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) != 0) {
-        if (esp_timer_get_time() - settle_start > 5000) {
+        if (esp_timer_get_time() - settle_start > 30000) {
+            last_fail_reason = "Echo line stuck HIGH before ping";
             return -1.0f;
         }
     }
+    esp_rom_delay_us(4);
 
+    // 2. Transmit 12us HIGH trigger pulse
     gpio_set_level((gpio_num_t)current_trig_pin, 1);
-    esp_rom_delay_us(15);
+    esp_rom_delay_us(12);
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
+    // 3. Wait for Echo pin to rise HIGH
     int64_t wait_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 0) {
         if (esp_timer_get_time() - wait_start > 30000) {
+            last_fail_reason = "Echo never went HIGH (no response)";
             return -1.0f;
         }
     }
 
+    // 4. Measure width of the return pulse
     int64_t echo_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 1) {
         if (esp_timer_get_time() - echo_start > 35000) {
+            last_fail_reason = "Echo stayed HIGH too long (>35ms)";
             return -1.0f;
         }
     }
     int64_t echo_end = esp_timer_get_time();
     int64_t duration = echo_end - echo_start;
 
-    if (duration <= 0 || duration > 30000) {
+    if (duration < 50 || duration > 30000) {
+        last_fail_reason = "Pulse duration out of range";
         return -1.0f;
     }
 
     float distance = (float)duration / 58.0f;
     if (distance > 400.0f || distance < 2.0f) {
+        last_fail_reason = "Distance outside 2-400cm";
         return -1.0f;
     }
 
+    last_fail_reason = "OK";
     return distance;
+}
+
+static void perform_auto_pin_swap(void) {
+    int32_t tmp = current_trig_pin;
+    current_trig_pin = current_echo_pin;
+    current_echo_pin = tmp;
+    pins_were_swapped = true;
+    consecutive_fails = 0;
+    consecutive_successes = 0;
+
+    configure_sensor_gpios();
+
+    ESP_LOGW(TAG, "No echo detected. Auto-swapping pins -> Trig=GPIO%ld, Echo=GPIO%ld",
+             (long)current_trig_pin, (long)current_echo_pin);
+
+    char swap_msg[96];
+    snprintf(swap_msg, sizeof(swap_msg), ">> [SENSOR] Swapped to Trig=GPIO%ld, Echo=GPIO%ld\n",
+             (long)current_trig_pin, (long)current_echo_pin);
+    ble_manager_send_notify(swap_msg);
 }
 
 static void ultrasonic_safety_task(void *pvParameter) {
@@ -130,10 +176,67 @@ static void ultrasonic_safety_task(void *pvParameter) {
     int64_t last_detection_time = 0;
     int consecutive_detections = 0;
 
+    ESP_LOGI(TAG, "HC-SR04 task running (Trig=GPIO%ld, Echo=GPIO%ld, Safety=%s)",
+             (long)current_trig_pin, (long)current_echo_pin, sensor_safety_enabled ? "ARMED" : "PASSIVE");
+
     while (1) {
         float dist = read_ultrasonic_distance();
         current_distance = dist;
 
+        int64_t now = esp_timer_get_time();
+
+        if (dist > 0.0f) {
+            consecutive_fails = 0;
+            consecutive_successes++;
+
+            // If auto-swap discovered the working pin arrangement, commit to flash
+            if (consecutive_successes == 3 && pins_were_swapped) {
+                pins_were_swapped = false;
+                nvs_handle_t my_handle;
+                if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+                    nvs_set_i32(my_handle, "sens_trig", current_trig_pin);
+                    nvs_set_i32(my_handle, "sens_echo", current_echo_pin);
+                    nvs_commit(my_handle);
+                    nvs_close(my_handle);
+                }
+
+                ESP_LOGI(TAG, "Pins confirmed working! Locked Trig=GPIO%ld, Echo=GPIO%ld (%.1f cm)",
+                         (long)current_trig_pin, (long)current_echo_pin, dist);
+
+                char lock_msg[96];
+                snprintf(lock_msg, sizeof(lock_msg), ">> [SENSOR] Locked pins: Trig=%ld, Echo=%ld (%.1fcm)\n",
+                         (long)current_trig_pin, (long)current_echo_pin, dist);
+                ble_manager_send_notify(lock_msg);
+            }
+
+            // Periodic diagnostic info on successful measurements
+            if (now - last_diag_log_time > 2000000) {
+                last_diag_log_time = now;
+                ESP_LOGI(TAG, "Ping: %.1f cm (Trig=%ld, Echo=%ld)", dist, (long)current_trig_pin, (long)current_echo_pin);
+            }
+        } else {
+            consecutive_successes = 0;
+            consecutive_fails++;
+
+            // Periodic diagnostic reporting when failing
+            if (now - last_diag_log_time > 1500000) {
+                last_diag_log_time = now;
+                ESP_LOGW(TAG, "Ping failed on Trig=GPIO%ld, Echo=GPIO%ld: %s (fails: %d)",
+                         (long)current_trig_pin, (long)current_echo_pin, last_fail_reason, consecutive_fails);
+
+                char fail_msg[96];
+                snprintf(fail_msg, sizeof(fail_msg), ">> [SENSOR] Trig=%ld Echo=%ld: %s\n",
+                         (long)current_trig_pin, (long)current_echo_pin, last_fail_reason);
+                ble_manager_send_notify(fail_msg);
+            }
+
+            // Auto-swap after 25 consecutive failures (~2 seconds)
+            if (consecutive_fails >= 25) {
+                perform_auto_pin_swap();
+            }
+        }
+
+        // Automatic safety halt intervention
         if (sensor_safety_enabled) {
             if (dist > 0.0f && dist < (float)distance_threshold) {
                 consecutive_detections++;
@@ -153,11 +256,12 @@ static void ultrasonic_safety_task(void *pvParameter) {
                     vTaskDelay(pdMS_TO_TICKS(reaction_delay));
                 }
                 if (safety_lock_engaged) {
-                    ESP_LOGW(TAG, "Safety Lock ENGAGED! Running Action: %s | Audio: %s", tripped_action, tripped_audio);
+                    ESP_LOGW(TAG, "Obstacle detected (%.1fcm < %ldcm)! Action: %s | Audio: %s",
+                             dist, (long)distance_threshold, tripped_action, tripped_audio);
                     if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
                     if (strcmp(tripped_action, "none") != 0) servo_set_action_bypass(tripped_action);
                 } else {
-                    ESP_LOGI(TAG, "Safety Lock RELEASED. Running Action: %s | Audio: %s", cleared_action, cleared_audio);
+                    ESP_LOGI(TAG, "Obstacle cleared. Action: %s | Audio: %s", cleared_action, cleared_audio);
                     if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
                     if (strcmp(cleared_action, "none") != 0) servo_set_action_bypass(cleared_action);
                 }
@@ -186,6 +290,9 @@ void sensor_set_pins(int trig, int echo) {
     if (trig <= 0 || echo <= 0 || trig == echo) return;
     current_trig_pin = trig;
     current_echo_pin = echo;
+    consecutive_fails = 0;
+    consecutive_successes = 0;
+    pins_were_swapped = false;
 
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
@@ -211,6 +318,14 @@ void sensor_set_enabled(bool enabled) {
     if (!enabled) {
         safety_lock_engaged = false;
     }
+
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_u8(my_handle, "sens_en", enabled ? 1 : 0);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+
     ESP_LOGI(TAG, "Ultrasonic automatic safety intervention %s", enabled ? "ARMED" : "DISARMED");
 }
 

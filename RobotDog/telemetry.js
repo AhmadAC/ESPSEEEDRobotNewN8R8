@@ -1,10 +1,10 @@
-let sensorEnabled = false;
+let sensorEnabled = true;
 let isObstacleTripped = false;
 let telemetryPollTimer = null;
 
 function initSensorStorage() {
-  sensorEnabled = false;
-  updateSensorState(false);
+  sensorEnabled = true;
+  updateSensorState(true);
 
   try {
     const th = localStorage.getItem("esp32_sens_thresh");
