@@ -3,7 +3,6 @@ let isObstacleTripped = false;
 let telemetryPollTimer = null;
 
 function initSensorStorage() {
-  // Sensor is strictly disabled by default
   sensorEnabled = false;
   updateSensorState(false);
 
@@ -47,16 +46,6 @@ function updateSensorState(enabled) {
   }
 
   if (!sensorEnabled) {
-    const distEl = document.getElementById("sens-live-dist");
-    const tagEl = document.getElementById("sens-source-tag");
-    if (distEl) {
-      distEl.innerText = "--";
-      distEl.style.color = "rgba(255,255,255,0.3)";
-    }
-    if (tagEl) {
-      tagEl.innerText = "OFF";
-      tagEl.style.color = "rgba(255,255,255,0.4)";
-    }
     isObstacleTripped = false;
   }
 }
@@ -65,45 +54,43 @@ function updateDistanceUI(distVal, thVal, sourceLabel = "BLE") {
   const distEl = document.getElementById("sens-live-dist");
   const tagEl = document.getElementById("sens-source-tag");
 
-  // If sensor is disabled, display standby indicators and suppress trip logic
-  if (!sensorEnabled) {
-    if (distEl) {
-      distEl.innerText = "--";
-      distEl.style.color = "rgba(255,255,255,0.3)";
-    }
-    if (tagEl) {
-      tagEl.innerText = "OFF";
-      tagEl.style.color = "rgba(255,255,255,0.4)";
-    }
-    isObstacleTripped = false;
-    return;
-  }
-
-  // Active state: update source and live distance
-  if (tagEl) {
-    tagEl.innerText = sourceLabel;
-    tagEl.style.color = sourceLabel === "BLE" ? "#38bdf8" : "#10b981";
-  }
-
   const numDist = parseFloat(distVal);
   const numTh = parseFloat(thVal) || 20.0;
 
-  if (!isNaN(numDist) && numDist > 0.0 && numDist <= 350.0) {
+  if (tagEl) {
+    if (sensorEnabled) {
+      tagEl.innerText = sourceLabel;
+      tagEl.style.color = sourceLabel === "BLE" ? "#38bdf8" : "#10b981";
+    } else {
+      tagEl.innerText = "STANDBY";
+      tagEl.style.color = "rgba(255,255,255,0.5)";
+    }
+  }
+
+  if (!isNaN(numDist) && numDist > 0.0 && numDist <= 400.0) {
     if (distEl) {
       distEl.innerText = numDist.toFixed(1) + "cm";
-      distEl.style.color = (numDist < numTh) ? "#ef4444" : "#10b981";
+      if (!sensorEnabled) {
+        distEl.style.color = "#38bdf8";
+      } else {
+        distEl.style.color = (numDist < numTh) ? "#ef4444" : "#10b981";
+      }
     }
 
-    if (numDist < numTh) {
-      if (!isObstacleTripped) {
-        isObstacleTripped = true;
-        triggerObstacleTrip(numDist, numTh);
+    if (sensorEnabled) {
+      if (numDist < numTh) {
+        if (!isObstacleTripped) {
+          isObstacleTripped = true;
+          triggerObstacleTrip(numDist, numTh);
+        }
+      } else {
+        if (isObstacleTripped) {
+          isObstacleTripped = false;
+          triggerObstacleClear(numDist, numTh);
+        }
       }
     } else {
-      if (isObstacleTripped) {
-        isObstacleTripped = false;
-        triggerObstacleClear(numDist, numTh);
-      }
+      isObstacleTripped = false;
     }
   } else {
     if (distEl) {
@@ -160,13 +147,12 @@ function toggleSensor() {
 
   if (sensorEnabled) {
     sendCommand("sensor on");
-    showToast("Obstacle Sensor ENABLED", "success");
+    showToast("Obstacle Safety ENABLED", "success");
     appendLog("Sensor", "Command: sensor on (ARMED)");
   } else {
     sendCommand("sensor off");
-    updateDistanceUI(null, null);
-    showToast("Obstacle Sensor DISABLED", "warn");
-    appendLog("Sensor", "Command: sensor off (DISARMED)");
+    showToast("Obstacle Safety DISARMED", "warn");
+    appendLog("Sensor", "Command: sensor off (STANDBY)");
   }
 }
 
@@ -217,7 +203,6 @@ function startActivePolling() {
   telemetryPollTimer = setInterval(async () => {
     if (!isConnected) return;
     
-    // Query status without flooding the serial bus (1500ms cycle)
     await sendCommand("status");
 
     const backend = getBleBackend();

@@ -301,7 +301,17 @@ static esp_err_t ws_handler(httpd_req_t *req) {
                 cJSON *claw_ang = cJSON_GetObjectItem(json, "claw_angle");
                 if (!claw_ang) claw_ang = cJSON_GetObjectItem(json, "angle");
 
-                if (claw_cmd && claw_cmd->valuestring) {
+                if (act_item && act_item->valuestring && strcmp(act_item->valuestring, "get_sensor") == 0) {
+                    char resp[96];
+                    snprintf(resp, sizeof(resp), "{\"sensor_distance\":%.1f,\"safety_lock\":%s}",
+                             (double)sensor_get_distance(),
+                             sensor_is_safety_locked() ? "true" : "false");
+                    httpd_ws_frame_t resp_frame = {};
+                    resp_frame.type = HTTPD_WS_TYPE_TEXT;
+                    resp_frame.payload = (uint8_t*)resp;
+                    resp_frame.len = strlen(resp);
+                    httpd_ws_send_frame(req, &resp_frame);
+                } else if (claw_cmd && claw_cmd->valuestring) {
                     claw_execute_command(claw_cmd->valuestring);
                 } else if (claw_ang) {
                     claw_set_angle(claw_ang->valueint);

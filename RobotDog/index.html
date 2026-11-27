@@ -35,7 +35,7 @@
 
         .card {
             background: rgba(26, 26, 26, 0.95);
-            border: 1px solid #333;
+            border: 1px solid #334155;
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 20px;
@@ -390,7 +390,6 @@
             ws = new WebSocket(wsUrl);
             
             ws.onopen = function() {
-                console.log('WebSocket Connected');
                 updateConnectionStatus(true);
                 startSensorUpdates();
             };
@@ -401,19 +400,15 @@
                     if (data.sensor_distance !== undefined) {
                         updateSensorDisplay(data.sensor_distance, data.safety_lock);
                     }
-                } catch (e) {
-                    console.error('WebSocket message parse error:', e);
-                }
+                } catch (e) {}
             };
             
             ws.onclose = function() {
-                console.log('WebSocket Disconnected');
                 updateConnectionStatus(false);
                 setTimeout(connectWebSocket, 2000);
             };
 
-            ws.onerror = function(error) {
-                console.error('WebSocket Error:', error);
+            ws.onerror = function() {
                 updateConnectionStatus(false);
             };
         }
@@ -431,7 +426,7 @@
 
         function updateSlider(slider) {
             const servoId = slider.dataset.servo;
-            const angle = parseInt(slider.value);
+            const angle = parseInt(slider.value, 10);
             const valueDisplay = document.getElementById(servoId.replace('_', '-') + '-value');
             
             if (valueDisplay) {
@@ -453,7 +448,7 @@
                         body: JSON.stringify({ id: id, angle: angle })
                     });
                 }
-            }, 50);
+            }, 30);
         }
 
         function sendAction(action) {
@@ -473,14 +468,18 @@
             const statusElement = document.getElementById('sensor-status');
             
             if (sensorElement) {
-                sensorElement.textContent = distance.toFixed(1) + ' cm';
-                
-                if (distance < 20) {
-                    sensorElement.style.color = '#ff4444';
-                } else if (distance < 50) {
-                    sensorElement.style.color = '#ffaa00';
+                if (distance !== undefined && distance > 0.0 && distance <= 400.0) {
+                    sensorElement.textContent = distance.toFixed(1) + ' cm';
+                    if (distance < 20) {
+                        sensorElement.style.color = '#ff4444';
+                    } else if (distance < 50) {
+                        sensorElement.style.color = '#ffaa00';
+                    } else {
+                        sensorElement.style.color = '#44ff44';
+                    }
                 } else {
-                    sensorElement.style.color = '#44ff44';
+                    sensorElement.textContent = '-- cm';
+                    sensorElement.style.color = '#888';
                 }
             }
             
@@ -501,8 +500,17 @@
             sensorUpdateInterval = setInterval(() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ action: 'get_sensor' }));
+                } else {
+                    fetch('/sensor')
+                        .then(r => r.json())
+                        .then(d => {
+                            if (d.distance !== undefined) {
+                                updateSensorDisplay(d.distance, d.enabled && d.distance > 0 && d.distance < d.threshold);
+                            }
+                        })
+                        .catch(() => {});
                 }
-            }, 500);
+            }, 300);
         }
 
         function emergencyStop() {
@@ -517,6 +525,7 @@
 
         window.onload = function() {
             connectWebSocket();
+            startSensorUpdates();
             
             document.querySelectorAll('input[type="range"][data-servo]').forEach(slider => {
                 slider.addEventListener('input', function() {

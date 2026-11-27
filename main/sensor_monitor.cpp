@@ -1,4 +1,3 @@
-// main\sensor_monitor.cpp
 #include "sensor_monitor.h"
 #include "servo_controller.h"
 #include "audio_player.h"
@@ -13,9 +12,8 @@
 
 static const char *TAG = "SENSOR";
 
-// Default ultrasonic pins (Configurable in NVS)
-static int32_t current_trig_pin = 5; // D4
-static int32_t current_echo_pin = 6; // D5
+static int32_t current_trig_pin = 5;
+static int32_t current_echo_pin = 6;
 
 static bool sensor_safety_enabled = false;
 static bool safety_lock_engaged = false;
@@ -25,7 +23,6 @@ static float current_distance = -1.0f;
 
 static TaskHandle_t sensor_task_handle = NULL;
 
-// Dynamic response buffers
 static char tripped_action[16] = "none";
 static char cleared_action[16] = "none";
 static char tripped_audio[16] = "none";
@@ -63,6 +60,9 @@ static void load_sensor_nvs() {
 }
 
 static void configure_sensor_gpios() {
+    gpio_reset_pin((gpio_num_t)current_trig_pin);
+    gpio_reset_pin((gpio_num_t)current_echo_pin);
+
     gpio_config_t trig_io = {};
     trig_io.intr_type = GPIO_INTR_DISABLE;
     trig_io.mode = GPIO_MODE_OUTPUT;
@@ -83,33 +83,41 @@ static void configure_sensor_gpios() {
 
 static float read_ultrasonic_distance() {
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
-    esp_rom_delay_us(4);
+    esp_rom_delay_us(5);
+
+    int64_t settle_start = esp_timer_get_time();
+    while (gpio_get_level((gpio_num_t)current_echo_pin) != 0) {
+        if (esp_timer_get_time() - settle_start > 5000) {
+            return -1.0f;
+        }
+    }
+
     gpio_set_level((gpio_num_t)current_trig_pin, 1);
-    esp_rom_delay_us(12);
+    esp_rom_delay_us(15);
     gpio_set_level((gpio_num_t)current_trig_pin, 0);
 
     int64_t wait_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 0) {
-        if (esp_timer_get_time() - wait_start > 12000) {
+        if (esp_timer_get_time() - wait_start > 30000) {
             return -1.0f;
         }
     }
 
     int64_t echo_start = esp_timer_get_time();
     while (gpio_get_level((gpio_num_t)current_echo_pin) == 1) {
-        if (esp_timer_get_time() - echo_start > 25000) {
-            break;
+        if (esp_timer_get_time() - echo_start > 35000) {
+            return -1.0f;
         }
     }
     int64_t echo_end = esp_timer_get_time();
     int64_t duration = echo_end - echo_start;
 
-    if (duration <= 0 || duration > 25000) {
+    if (duration <= 0 || duration > 30000) {
         return -1.0f;
     }
 
     float distance = (float)duration / 58.0f;
-    if (distance > 350.0f || distance < 2.0f) {
+    if (distance > 400.0f || distance < 2.0f) {
         return -1.0f;
     }
 
@@ -161,7 +169,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
             consecutive_detections = 0;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(120));
+        vTaskDelay(pdMS_TO_TICKS(80));
     }
 }
 
@@ -170,12 +178,12 @@ void sensor_monitor_init() {
     configure_sensor_gpios();
 
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 3, &sensor_task_handle, 1);
-    ESP_LOGI(TAG, "Ultrasonic Sensor initialized on Trig=GPIO%ld, Echo=GPIO%ld",
+    ESP_LOGI(TAG, "Ultrasonic HC-SR04 initialized on Trig=GPIO%ld, Echo=GPIO%ld",
              (long)current_trig_pin, (long)current_echo_pin);
 }
 
 void sensor_set_pins(int trig, int echo) {
-    if (trig <= 0 || echo <= 0) return;
+    if (trig <= 0 || echo <= 0 || trig == echo) return;
     current_trig_pin = trig;
     current_echo_pin = echo;
 

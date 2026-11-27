@@ -261,9 +261,22 @@ static esp_err_t ws_handler(httpd_req_t *req) {
             cJSON *json = cJSON_Parse((char*)ws_pkt.payload);
             if (json) {
                 cJSON *act_item = cJSON_GetObjectItem(json, "action");
-                if (act_item) {
-                    if (is_claw_mode) claw_execute_command(act_item->valuestring);
-                    else servo_set_action(act_item->valuestring);
+                if (act_item && act_item->valuestring) {
+                    if (strcmp(act_item->valuestring, "get_sensor") == 0) {
+                        char resp[96];
+                        snprintf(resp, sizeof(resp), "{\"sensor_distance\":%.1f,\"safety_lock\":%s}",
+                                 (double)sensor_get_distance(),
+                                 sensor_is_safety_locked() ? "true" : "false");
+                        httpd_ws_frame_t resp_frame = {};
+                        resp_frame.type = HTTPD_WS_TYPE_TEXT;
+                        resp_frame.payload = (uint8_t*)resp;
+                        resp_frame.len = strlen(resp);
+                        httpd_ws_send_frame(req, &resp_frame);
+                    } else if (is_claw_mode) {
+                        claw_execute_command(act_item->valuestring);
+                    } else {
+                        servo_set_action(act_item->valuestring);
+                    }
                 }
                 cJSON_Delete(json);
             }
