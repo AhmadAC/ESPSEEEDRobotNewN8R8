@@ -3,6 +3,7 @@ const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const UART_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 let isConnected = false;
+let isConnecting = false;
 let bleBackend = null;
 let nativeDeviceId = null;
 let webDevice = null;
@@ -72,15 +73,20 @@ function initBackendUI() {
 }
 
 async function toggleConnection() {
+  if (isConnecting) return;
   if (isConnected) await disconnectDevice();
   else await connectDevice();
 }
 
 async function connectDevice() {
+  if (isConnecting || isConnected) return;
+  isConnecting = true;
+
   const backend = getBleBackend();
   if (!backend) {
     showToast("Bluetooth is unavailable in this environment.", "error");
     appendLog("Error", "No BluetoothLe plugin found in window or parent.");
+    isConnecting = false;
     return;
   }
 
@@ -159,9 +165,13 @@ async function connectDevice() {
       onConnectedSuccess(webDevice.name || "ESP32-Robot");
     }
   } catch (err) {
-    appendLog("Error", `Connection failed: ${err.message || err}`);
-    showToast("Bluetooth failed to connect", "error");
-    onDisconnectedCleanup();
+    if (!isConnected) {
+      appendLog("Error", `Connection failed: ${err.message || err}`);
+      showToast("Bluetooth failed to connect", "error");
+      onDisconnectedCleanup();
+    }
+  } finally {
+    isConnecting = false;
   }
 }
 
@@ -179,6 +189,7 @@ async function disconnectDevice() {
 
 function onConnectedSuccess(name) {
   isConnected = true;
+  isConnecting = false;
   document.getElementById("device-name").innerText = name;
   setUiState("Connected", "#10b981", "Disconnect");
   appendLog("BLE", `Connected to ${name}. Telemetry active.`);
@@ -186,14 +197,9 @@ function onConnectedSuccess(name) {
 
   setTimeout(() => {
     sendCommand("status");
-    setTimeout(() => sendCommand("cal_get"), 200);
-    setTimeout(() => sendCommand("gethw"), 400);
-    setTimeout(() => sendCommand("getswitchkeys"), 600);
-    setTimeout(() => {
-      if (typeof syncSensorToRobot === "function") {
-        syncSensorToRobot();
-      }
-    }, 850);
+    setTimeout(() => sendCommand("cal_get"), 250);
+    setTimeout(() => sendCommand("gethw"), 500);
+    setTimeout(() => sendCommand("getswitchkeys"), 750);
   }, 400);
 
   startActivePolling();
@@ -201,6 +207,7 @@ function onConnectedSuccess(name) {
 
 function onDisconnectedCleanup() {
   isConnected = false;
+  isConnecting = false;
   nativeDeviceId = null;
   webDevice = null;
   webServer = null;

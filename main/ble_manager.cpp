@@ -73,10 +73,7 @@ void ble_manager_send_notify(const char* message) {
         size_t send_len = (len - i > chunk_size) ? chunk_size : (len - i);
         struct os_mbuf *om = ble_hs_mbuf_from_flat(message + i, send_len);
         if (om != NULL) {
-            int rc = ble_gatts_notify_custom(active_conn_handle, s_tx_val_handle, om);
-            if (rc != 0) {
-                ESP_LOGW(TAG, "Notify failed: rc=%d", rc);
-            }
+            ble_gatts_notify_custom(active_conn_handle, s_tx_val_handle, om);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -173,18 +170,16 @@ static void execute_ble_command(const char* p) {
     if (strcmp(p, "sensor on") == 0 || strcmp(p, "sensor 1") == 0) {
         sensor_set_enabled(true);
         ble_manager_send_notify(">> Sensor Armed\n");
-        send_full_status();
         return;
     }
     if (strcmp(p, "sensor off") == 0 || strcmp(p, "sensor 0") == 0) {
         sensor_set_enabled(false);
         ble_manager_send_notify(">> Sensor Disarmed (Passive Monitor)\n");
-        send_full_status();
         return;
     }
     if (strncmp(p, "sens_thresh ", 12) == 0) {
         sensor_set_threshold(atoi(p + 12));
-        send_full_status();
+        ble_manager_send_notify(">> Thresh Updated\n");
         return;
     }
     if (strncmp(p, "sens_actions ", 13) == 0) {
@@ -192,7 +187,7 @@ static void execute_ble_command(const char* p) {
         if (sscanf(p + 13, "%31s %31s", trip, clear) == 2) {
             sensor_set_actions(trip, clear);
         }
-        send_full_status();
+        ble_manager_send_notify(">> Actions Updated\n");
         return;
     }
     if (strncmp(p, "sens_audio ", 11) == 0) {
@@ -200,7 +195,7 @@ static void execute_ble_command(const char* p) {
         if (sscanf(p + 11, "%31s %31s", atrip, aclear) == 2) {
             sensor_set_audio_actions(atrip, aclear);
         }
-        send_full_status();
+        ble_manager_send_notify(">> Audio Updated\n");
         return;
     }
 
@@ -208,30 +203,39 @@ static void execute_ble_command(const char* p) {
     if (sscanf(p, "setpins leg %d %d %d %d", &ll, &hr, &hl, &lr) == 4) {
         servo_set_pins(ll, hr, hl, lr);
         ble_manager_send_notify(">> Leg Pins Updated\n");
-        send_full_status();
         return;
     }
     if (sscanf(p, "setpins sens %d %d", &tr, &ec) == 2) {
         sensor_set_pins(tr, ec);
         ble_manager_send_notify(">> Sensor Pins Updated\n");
-        send_full_status();
         return;
     }
     if (sscanf(p, "setpins aud %d %d %d", &b, &l, &d) == 3) {
         audio_set_pins(b, l, d);
         ble_manager_send_notify(">> Audio Pins Updated\n");
-        send_full_status();
         return;
     }
     char nhl[32] = {0}, nhr[32] = {0}, nll[32] = {0}, nlr[32] = {0};
     if (sscanf(p, "setnames %31s %31s %31s %31s", nhl, nhr, nll, nlr) == 4) {
         servo_set_leg_names(nhl, nhr, nll, nlr);
         ble_manager_send_notify(">> Leg Names Updated\n");
-        send_full_status();
         return;
     }
     if (strcmp(p, "gethw") == 0) {
-        send_full_status();
+        int sll = 1, shr = 2, shl = 3, slr = 4;
+        int strig = 5, secho = 6;
+        int sbclk = 10, slrc = 11, sdin = 12;
+        servo_get_pins(&sll, &shr, &shl, &slr);
+        sensor_get_pins(&strig, &secho);
+        audio_get_pins(&sbclk, &slrc, &sdin);
+        char buf[256];
+        snprintf(buf, sizeof(buf), "HWPINS:srv=%d,%d,%d,%d;sens=%d,%d;aud=%d,%d,%d\n",
+                 sll, shr, shl, slr, strig, secho, sbclk, slrc, sdin);
+        ble_manager_send_notify(buf);
+        char n1[32] = {0}, n2[32] = {0}, n3[32] = {0}, n4[32] = {0};
+        servo_get_leg_names(n1, n2, n3, n4, sizeof(n1));
+        snprintf(buf, sizeof(buf), "HWNAMES:hl=%.31s;hr=%.31s;ll=%.31s;lr=%.31s\n", n1, n2, n3, n4);
+        ble_manager_send_notify(buf);
         return;
     }
 
@@ -247,28 +251,24 @@ static void execute_ble_command(const char* p) {
         servo_set_target("high_left", leg_ang);
         if (ble_sync_front || ble_sync_all) servo_set_target("high_right", leg_ang);
         if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
-        send_full_status();
         return;
     }
     if (sscanf(p, "hr %d", &leg_ang) == 1) {
         servo_set_target("high_right", leg_ang);
         if (ble_sync_front || ble_sync_all) servo_set_target("high_left", leg_ang);
         if (ble_sync_all) { servo_set_target("low_left", leg_ang); servo_set_target("low_right", leg_ang); }
-        send_full_status();
         return;
     }
     if (sscanf(p, "ll %d", &leg_ang) == 1) {
         servo_set_target("low_left", leg_ang);
         if (ble_sync_back || ble_sync_all) servo_set_target("low_right", leg_ang);
         if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
-        send_full_status();
         return;
     }
     if (sscanf(p, "lr %d", &leg_ang) == 1) {
         servo_set_target("low_right", leg_ang);
         if (ble_sync_back || ble_sync_all) servo_set_target("low_left", leg_ang);
         if (ble_sync_all) { servo_set_target("high_left", leg_ang); servo_set_target("high_right", leg_ang); }
-        send_full_status();
         return;
     }
 
@@ -277,24 +277,23 @@ static void execute_ble_command(const char* p) {
         vTaskDelay(pdMS_TO_TICKS(40));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Offsets Saved\n");
-        send_full_status();
         return;
     }
     if (sscanf(p, "offset ll %d", &ll) == 1) {
         int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", ll, o2, o3, o4, true); send_full_status(); return;
+        servo_set_calibration("offsets", ll, o2, o3, o4, true); return;
     }
     if (sscanf(p, "offset hr %d", &hr) == 1) {
         int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, hr, o3, o4, true); send_full_status(); return;
+        servo_set_calibration("offsets", o1, hr, o3, o4, true); return;
     }
     if (sscanf(p, "offset hl %d", &hl) == 1) {
         int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, o2, hl, o4, true); send_full_status(); return;
+        servo_set_calibration("offsets", o1, o2, hl, o4, true); return;
     }
     if (sscanf(p, "offset lr %d", &lr) == 1) {
         int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
-        servo_set_calibration("offsets", o1, o2, o3, lr, true); send_full_status(); return;
+        servo_set_calibration("offsets", o1, o2, o3, lr, true); return;
     }
     if (strcmp(p, "cal_save") == 0) {
         int o1, o2, o3, o4; servo_get_offsets(&o1, &o2, &o3, &o4);
@@ -302,7 +301,6 @@ static void execute_ble_command(const char* p) {
         vTaskDelay(pdMS_TO_TICKS(40));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Calibration saved\n");
-        send_full_status();
         return;
     }
     if (strcmp(p, "cal_get") == 0) {
@@ -316,7 +314,6 @@ static void execute_ble_command(const char* p) {
         vTaskDelay(pdMS_TO_TICKS(40));
         servo_set_action_bypass("stand");
         ble_manager_send_notify(">> Reset defaults\n");
-        send_full_status();
         return;
     }
 
@@ -392,18 +389,24 @@ static void execute_ble_command(const char* p) {
         char msg[64];
         snprintf(msg, sizeof(msg), ">> Volume: %d%%\n", tv);
         ble_manager_send_notify(msg);
-        send_full_status();
         return;
     }
 
-    if (strcmp(p, "status") == 0) { send_full_status(); return; }
+    if (strcmp(p, "status") == 0) { 
+        send_full_status(); 
+        return; 
+    }
     if (strcmp(p, "reboot") == 0) {
         ble_manager_send_notify(">> Rebooting...\n");
         vTaskDelay(pdMS_TO_TICKS(150));
         esp_restart();
         return;
     }
-    if (strcmp(p, "cam_flip") == 0) { cam_toggle_flip(); ble_manager_send_notify(">> Cam Flipped\n"); return; }
+    if (strcmp(p, "cam_flip") == 0) { 
+        cam_toggle_flip(); 
+        ble_manager_send_notify(">> Cam Flipped\n"); 
+        return; 
+    }
 
     bool is_num = true;
     for (int i = 0; p[i] != '\0'; i++) {
@@ -415,7 +418,6 @@ static void execute_ble_command(const char* p) {
         else servo_set_target("all", ang);
         char msg[64]; snprintf(msg, sizeof(msg), ">> Angle: %d\n", ang);
         ble_manager_send_notify(msg);
-        send_full_status();
         return;
     }
 
@@ -442,7 +444,6 @@ static void execute_ble_command(const char* p) {
         }
         cJSON_Delete(json);
         ble_manager_send_notify(">> JSON Handled\n");
-        send_full_status();
         return;
     }
 
@@ -456,22 +457,9 @@ static void execute_ble_command(const char* p) {
 
 static void ble_cmd_worker_task(void *pvParameters) {
     char cmd_buf[BLE_CMD_MAX_LEN];
-    TickType_t last_tick = xTaskGetTickCount();
     while (1) {
-        if (xQueueReceive(s_ble_cmd_queue, cmd_buf, pdMS_TO_TICKS(350)) == pdTRUE) {
+        if (xQueueReceive(s_ble_cmd_queue, cmd_buf, portMAX_DELAY) == pdTRUE) {
             execute_ble_command(cmd_buf);
-        }
-        if (is_ble_connected_flag && is_subscribed_flag) {
-            TickType_t now = xTaskGetTickCount();
-            if ((now - last_tick) >= pdMS_TO_TICKS(350)) {
-                last_tick = now;
-                char pkt[48];
-                snprintf(pkt, sizeof(pkt), "SENS:%.1f,%d,%ld\n",
-                         (double)sensor_get_distance(),
-                         sensor_is_enabled() ? 1 : 0,
-                         (long)sensor_get_threshold());
-                ble_manager_send_notify(pkt);
-            }
         }
     }
 }
@@ -600,6 +588,8 @@ static void ble_on_reset(int reason) {
 }
 
 void ble_manager_init(void) {
+    esp_log_level_set("NimBLE", ESP_LOG_WARN);
+
     if (!s_ble_cmd_queue) {
         s_ble_cmd_queue = xQueueCreate(BLE_CMD_QUEUE_LEN, BLE_CMD_MAX_LEN);
         xTaskCreatePinnedToCore(ble_cmd_worker_task, "ble_worker", 8192, NULL, 5, NULL, 1);

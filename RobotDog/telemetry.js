@@ -1,4 +1,3 @@
-
 let sensorEnabled = false;
 let isObstacleTripped = false;
 let telemetryPollTimer = null;
@@ -203,25 +202,8 @@ function startActivePolling() {
   if (telemetryPollTimer) clearInterval(telemetryPollTimer);
   telemetryPollTimer = setInterval(async () => {
     if (!isConnected) return;
-    
     await sendCommand("status");
-
-    const backend = getBleBackend();
-    if (backend?.type === "capacitor" && nativeDeviceId) {
-      try {
-        const Ble = backend.ble;
-        const res = await Ble.read({
-          deviceId: nativeDeviceId,
-          service: UART_SERVICE_UUID,
-          characteristic: UART_TX_CHAR_UUID
-        });
-        if (res) {
-          const text = universalBleDecode(res.value !== undefined ? res.value : res);
-          if (text) handleIncomingBleData(text, "READ");
-        }
-      } catch (e) {}
-    }
-  }, 1500);
+  }, 2000);
 }
 
 function stopTelemetryTimers() {
